@@ -119,9 +119,9 @@ function buildChannel({ channel, ref, tempRoot, goVersion }) {
   const ldflags = [
     "-s",
     "-w",
-    `-X=main.buildChannel=${channel}`,
-    `-X=main.buildVersion=${channel === "release" ? ref.label : download.Version}`,
-    `-X=main.buildCommit=${ref.commit}`,
+    `-X=main.channel=${channel}`,
+    `-X=main.version=${channel === "release" ? ref.label : download.Version}`,
+    `-X=main.commit=${ref.commit}`,
   ].join(" ");
 
   run(
@@ -206,10 +206,11 @@ async function githubJSON(path) {
 }
 
 function run(command, args, extraEnv = {}) {
+  const toolEnv = command === "go" ? { GOTOOLCHAIN: "local" } : {};
   return execFileSync(command, args, {
     cwd: root,
     encoding: "utf8",
-    env: { ...process.env, ...extraEnv },
+    env: { ...process.env, ...toolEnv, ...extraEnv },
     maxBuffer: maxOutput,
     stdio: ["ignore", "pipe", "inherit"],
   }).trim();
