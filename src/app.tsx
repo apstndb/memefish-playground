@@ -82,8 +82,8 @@ export function App() {
           if (nextResponse.fatal !== null) {
             setStatus({
               tone: "error",
-              label: "Stopped",
-              message: `The parser stopped: ${nextResponse.fatal.message}`,
+              label: "Parse failed",
+              message: `The parser could not parse this request: ${nextResponse.fatal.message}`,
             });
           } else if (nextResponse.diagnostics.length > 0) {
             setStatus({

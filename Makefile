@@ -2,14 +2,19 @@ SHELL := /bin/sh
 
 GO ?= go
 GOLANGCI_LINT ?= golangci-lint
-GOVULNCHECK ?= go run golang.org/x/vuln/cmd/govulncheck@v1.6.0
 VITE_BASE ?= /
+TMPDIR ?= /tmp
+GOCACHE ?= $(TMPDIR)/memefish-playground-go-build
+GOLANGCI_LINT_CACHE ?= $(TMPDIR)/memefish-playground-golangci-lint
 
 export GOTOOLCHAIN := local
+export GOCACHE
+export GOLANGCI_LINT_CACHE
 
-.PHONY: build build-wasm check dev e2e fmt format-check lint test vet vuln
+.PHONY: build build-wasm check dev e2e fmt format-check lint module-verify test typecheck verify vet
 
-dev: build-wasm
+dev:
+	npm run build:wasm
 	npm run dev:ui
 
 fmt:
@@ -30,19 +35,21 @@ lint:
 	npm run lint
 
 test:
-	$(GO) test -race -shuffle=on -coverprofile=/tmp/memefish-playground-coverage.out ./...
+	$(GO) test -race -shuffle=on -coverprofile=$(TMPDIR)/memefish-playground-coverage.out ./...
 	npm run test:unit
+
+typecheck:
+	npm run typecheck
 
 vet:
 	$(GO) vet ./...
 	GOOS=js GOARCH=wasm CGO_ENABLED=0 $(GO) vet ./cmd/wasm
 
-vuln:
+module-verify:
 	$(GO) mod verify
-	$(GOVULNCHECK) ./...
 
 build-wasm:
-	npm run build:wasm
+	npm run build:wasm:verified
 
 build: build-wasm
 	npm run build:ui -- --base="$(VITE_BASE)"
@@ -50,4 +57,6 @@ build: build-wasm
 e2e:
 	npm run test:e2e
 
-check: format-check lint test vet vuln build
+verify: format-check lint typecheck test vet module-verify
+
+check: verify build

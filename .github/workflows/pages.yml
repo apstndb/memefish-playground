@@ -19,11 +19,13 @@ jobs:
     name: Build
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     permissions:
       contents: read
       pages: read
     env:
-      GH_TOKEN: ${{ github.token }}
+      GOCACHE: /tmp/memefish-playground-go-build
+      GOLANGCI_LINT_CACHE: /tmp/memefish-playground-golangci-lint
       GOTOOLCHAIN: local
       GOPROXY: https://proxy.golang.org,direct
       GOSUMDB: sum.golang.org
@@ -44,8 +46,10 @@ jobs:
         run: |
           if [ -n "$PAGES_BASE_PATH" ]; then
             echo "VITE_BASE=${PAGES_BASE_PATH%/}/" >> "$GITHUB_ENV"
+            echo "PLAYWRIGHT_BASE_PATH=${PAGES_BASE_PATH%/}/" >> "$GITHUB_ENV"
           else
             echo "VITE_BASE=/" >> "$GITHUB_ENV"
+            echo "PLAYWRIGHT_BASE_PATH=/" >> "$GITHUB_ENV"
           fi
 
       - name: Set up Go
@@ -71,15 +75,18 @@ jobs:
           version-file: .golangci-lint-version
           install-only: true
 
-      - name: Run project gate
-        run: make check
+      - name: Run project checks
+        run: make verify
+
+      - name: Build deployable site
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: make build
 
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
       - name: Run browser smoke tests
-        env:
-          PLAYWRIGHT_BASE_PATH: ${{ env.VITE_BASE }}
         run: make e2e
 
       - name: Upload Pages artifact
@@ -92,8 +99,8 @@ jobs:
     if: github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
-      contents: read
       pages: write
       id-token: write
     environment:

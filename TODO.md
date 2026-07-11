@@ -5,12 +5,12 @@ tracked project document, not a temporary agent scratch file.
 
 ## Milestone 1: usable public playground
 
-- [ ] Implement the host-testable Go parser bridge and structured protocol.
-- [ ] Add the thin Go/WASM `syscall/js` adapter.
-- [ ] Build latest-release and main-HEAD engines with immutable metadata.
-- [ ] Implement the Preact editor, modes, diagnostics, AST, and SQL views.
-- [ ] Add unit and Chromium smoke tests for both engines.
-- [ ] Add CI and GitHub Pages deployment with a six-hour refresh schedule.
+- [x] Implement the host-testable Go parser bridge and structured protocol.
+- [x] Add the thin Go/WASM `syscall/js` adapter.
+- [x] Build latest-release and main-HEAD engines with immutable metadata.
+- [x] Implement the Preact editor, modes, diagnostics, AST, and SQL views.
+- [x] Add unit and Chromium smoke tests for both engines.
+- [x] Add CI and GitHub Pages deployment with a six-hour refresh schedule.
 - [ ] Publish the initial site and verify the deployed version metadata.
 
 ## Later

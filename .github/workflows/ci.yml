@@ -17,8 +17,10 @@ jobs:
   check:
     name: Check
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     env:
-      GH_TOKEN: ${{ github.token }}
+      GOCACHE: /tmp/memefish-playground-go-build
+      GOLANGCI_LINT_CACHE: /tmp/memefish-playground-golangci-lint
       GOTOOLCHAIN: local
       GOPROXY: https://proxy.golang.org,direct
       GOSUMDB: sum.golang.org

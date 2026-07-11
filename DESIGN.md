@@ -2,7 +2,8 @@
 
 ## Status
 
-Initial implementation in progress.
+Milestone 1 implemented. Publication and deployed-metadata verification are the
+remaining launch steps.
 
 ## Goals
 
@@ -80,6 +81,7 @@ change and must not be presented as round-trippable memefish JSON.
   newly rewritten compiler ecosystem settles.
 - CodeMirror 6 for an accessible, mobile-capable editor without Monaco's IDE
   payload.
-- Native CSS custom properties and CSS Modules; no Tailwind or component kit.
+- Native CSS custom properties in a small global stylesheet; no Tailwind or
+  component kit.
 - Biome for formatting and linting, Vitest for unit tests, and Playwright for a
   production browser smoke test.
