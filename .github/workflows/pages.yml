@@ -5,7 +5,8 @@ on:
     branches:
       - main
   schedule:
-    - cron: "17 */6 * * *"
+    # Daily at 03:37 UTC, away from GitHub Actions' top-of-hour load peak.
+    - cron: "37 3 * * *"
   workflow_dispatch:
 
 permissions: {}

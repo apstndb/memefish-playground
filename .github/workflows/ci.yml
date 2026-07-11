@@ -60,6 +60,8 @@ jobs:
           git diff --exit-code -- go.mod go.sum
 
       - name: Run project gate
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: make check
 
       - name: Install Chromium

@@ -1,6 +1,7 @@
 # Third-party licenses
 
-The WebAssembly bundles distributed by memefish-playground include
+The WebAssembly bundles and generated `testdata/input` preset catalog
+distributed by memefish-playground include material from
 [`github.com/cloudspannerecosystem/memefish`](https://github.com/cloudspannerecosystem/memefish).
 
 ## memefish

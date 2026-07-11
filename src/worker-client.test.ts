@@ -49,6 +49,13 @@ describe("MemefishClient", () => {
     const release = makeEngine("release");
     client.selectEngine(release);
     const releaseWorker = requireWorker(workers, 0);
+    expect(releaseWorker.posted[0]).toEqual({
+      type: "initialize",
+      wasmExecUrl: release.wasmExecUrl,
+      wasmUrl: release.wasmUrl,
+      wasmBytes: release.bytes,
+      wasmSha256: release.sha256,
+    });
     const staleGenerationHandler = releaseWorker.onmessage;
     const queuedId = client.parse("statement", "SELECT 1");
     expect(queuedId).toBe("1:1");

@@ -1,7 +1,11 @@
+import { verifyWasmAsset } from "./wasm-integrity";
+
 interface InitializeWorkerMessage {
   type: "initialize";
   wasmExecUrl: string;
   wasmUrl: string;
+  wasmBytes: number;
+  wasmSha256: string;
 }
 
 interface GoRuntime {
@@ -39,7 +43,7 @@ async function initialize(message: InitializeWorkerMessage): Promise<void> {
   }
 
   const go = new Go();
-  const { instance } = await instantiateGo(message.wasmUrl, go.importObject);
+  const { instance } = await instantiateGo(message, go.importObject);
   void go.run(instance).catch(reportWorkerFailure);
 }
 
@@ -62,20 +66,17 @@ function invokeParser(requestJSON: string): void {
 }
 
 async function instantiateGo(
-  wasmUrl: string,
+  message: InitializeWorkerMessage,
   importObject: WebAssembly.Imports,
 ): Promise<WebAssembly.WebAssemblyInstantiatedSource> {
-  const response = await fetch(wasmUrl);
+  const response = await fetch(message.wasmUrl);
   if (!response.ok) {
     throw new Error(`WebAssembly could not be loaded (HTTP ${response.status}).`);
   }
 
-  const fallbackResponse = response.clone();
-  try {
-    return await WebAssembly.instantiateStreaming(response, importObject);
-  } catch {
-    return WebAssembly.instantiate(await fallbackResponse.arrayBuffer(), importObject);
-  }
+  const bytes = await response.arrayBuffer();
+  await verifyWasmAsset(bytes, message.wasmBytes, message.wasmSha256);
+  return WebAssembly.instantiate(bytes, importObject);
 }
 
 function isInitializeMessage(value: unknown): value is InitializeWorkerMessage {
@@ -86,7 +87,11 @@ function isInitializeMessage(value: unknown): value is InitializeWorkerMessage {
   return (
     message.type === "initialize" &&
     typeof message.wasmExecUrl === "string" &&
-    typeof message.wasmUrl === "string"
+    typeof message.wasmUrl === "string" &&
+    Number.isSafeInteger(message.wasmBytes) &&
+    (message.wasmBytes as number) > 0 &&
+    typeof message.wasmSha256 === "string" &&
+    /^[0-9a-f]{64}$/i.test(message.wasmSha256)
   );
 }
 
@@ -97,5 +102,3 @@ function reportWorkerFailure(error: unknown): void {
       error instanceof Error ? error.message : "The WebAssembly worker stopped unexpectedly.",
   });
 }
-
-export {};

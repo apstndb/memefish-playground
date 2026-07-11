@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { SqlEditor, type SelectionRequest } from "./editor";
+import { type SelectionRequest, SqlEditor } from "./editor";
 import {
   loadVersionsManifest,
   type ResolvedEngine,
   type ResolvedVersionsManifest,
 } from "./manifest";
 import { loadPreferences, savePreferences } from "./persistence";
+import { PresetPicker } from "./preset-picker";
+import { type PresetEntry, suggestedModeForPreset } from "./presets";
 import {
-  PARSE_MODES,
   type EngineChannel,
   type EngineIdentity,
+  PARSE_MODES,
   type ParseDiagnostic,
   type ParseMode,
   type ParseResponse,
@@ -23,6 +25,11 @@ interface StatusState {
   tone: StatusTone;
   label: string;
   message: string;
+}
+
+interface LoadedPresetState {
+  entry: PresetEntry;
+  mode: ParseMode;
 }
 
 const MODE_LABELS: Record<ParseMode, string> = {
@@ -41,6 +48,7 @@ const MODE_LABELS: Record<ParseMode, string> = {
 export function App() {
   const initialPreferences = useMemo(loadPreferences, []);
   const [selectedEngine, setSelectedEngine] = useState<EngineChannel>(initialPreferences.engine);
+  const [selectedReleaseVersion, setSelectedReleaseVersion] = useState<string | null>(null);
   const [mode, setMode] = useState<ParseMode>(initialPreferences.mode);
   const [source, setSource] = useState(initialPreferences.source);
   const [manifest, setManifest] = useState<ResolvedVersionsManifest | null>(null);
@@ -48,6 +56,7 @@ export function App() {
   const [outputTab, setOutputTab] = useState<OutputTab>("ast");
   const [selectionRequest, setSelectionRequest] = useState<SelectionRequest | null>(null);
   const [fatalMessage, setFatalMessage] = useState<string | null>(null);
+  const [loadedPreset, setLoadedPreset] = useState<LoadedPresetState | null>(null);
   const [status, setStatus] = useState<StatusState>({
     tone: "working",
     label: "Loading",
@@ -55,6 +64,16 @@ export function App() {
   });
   const debounceTimer = useRef<number | null>(null);
   const selectionToken = useRef(0);
+  const selectedReleaseEngine =
+    manifest?.releases?.find((engine) => engine.version === selectedReleaseVersion) ??
+    manifest?.channels.release ??
+    null;
+  const currentEngine =
+    selectedEngine === "release" ? selectedReleaseEngine : (manifest?.channels.main ?? null);
+  const availableParseModes = currentEngine?.parseModes ?? PARSE_MODES;
+  const effectiveMode = availableParseModes.includes(mode)
+    ? mode
+    : (availableParseModes[0] ?? "statement");
 
   const client = useMemo(
     () =>
@@ -129,10 +148,19 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (manifest !== null) {
-      client.selectEngine(manifest.channels[selectedEngine]);
+    if (currentEngine !== null) {
+      client.selectEngine(currentEngine);
     }
-  }, [client, manifest, selectedEngine]);
+  }, [client, currentEngine]);
+
+  useEffect(() => {
+    if (mode !== effectiveMode) {
+      client.invalidateRequests();
+      setResponse(null);
+      setFatalMessage(null);
+      setMode(effectiveMode);
+    }
+  }, [client, effectiveMode, mode]);
 
   useEffect(() => {
     if (manifest === null) {
@@ -140,23 +168,24 @@ export function App() {
     }
     clearDebounce(debounceTimer);
     debounceTimer.current = window.setTimeout(() => {
-      client.parse(mode, source);
-      setStatus({ tone: "working", label: "Parsing", message: "Parsing in the worker…" });
+      if (client.parse(effectiveMode, source) !== null) {
+        setStatus({ tone: "working", label: "Parsing", message: "Parsing in the worker…" });
+      }
       debounceTimer.current = null;
     }, 250);
 
     return () => clearDebounce(debounceTimer);
-  }, [client, manifest, mode, selectedEngine, source]);
+  }, [client, effectiveMode, manifest, selectedEngine, selectedReleaseVersion, source]);
 
   useEffect(() => {
-    savePreferences({ engine: selectedEngine, mode, source });
-  }, [mode, selectedEngine, source]);
+    savePreferences({ engine: selectedEngine, mode: effectiveMode, source });
+  }, [effectiveMode, selectedEngine, source]);
 
   useEffect(() => () => client.dispose(), [client]);
 
   const parseNow = () => {
     clearDebounce(debounceTimer);
-    if (client.parse(mode, source) !== null) {
+    if (client.parse(effectiveMode, source) !== null) {
       setStatus({ tone: "working", label: "Parsing", message: "Parsing in the worker…" });
     }
   };
@@ -174,6 +203,11 @@ export function App() {
     setSelectedEngine(engine);
   };
 
+  const changeReleaseVersion = (version: string) => {
+    invalidateParse();
+    setSelectedReleaseVersion(version);
+  };
+
   const changeMode = (nextMode: ParseMode) => {
     invalidateParse();
     setMode(nextMode);
@@ -184,6 +218,14 @@ export function App() {
     setSource(nextSource);
   };
 
+  const loadPreset = (entry: PresetEntry) => {
+    const nextMode = suggestedModeForPreset(entry) ?? effectiveMode;
+    invalidateParse();
+    setMode(nextMode);
+    setSource(entry.source);
+    setLoadedPreset({ entry, mode: nextMode });
+  };
+
   const selectDiagnostic = (diagnostic: ParseDiagnostic) => {
     setSelectionRequest({
       from: diagnostic.range.from,
@@ -192,8 +234,10 @@ export function App() {
     });
   };
 
-  const currentEngine = manifest?.channels[selectedEngine] ?? null;
   const diagnostics = response?.diagnostics ?? [];
+  const presetModified =
+    loadedPreset !== null &&
+    (source !== loadedPreset.entry.source || effectiveMode !== loadedPreset.mode);
 
   return (
     <div class="app-shell">
@@ -209,7 +253,15 @@ export function App() {
             Loading engine metadata…
           </div>
         ) : (
-          <EngineSelector manifest={manifest} selected={selectedEngine} onChange={changeEngine} />
+          <EngineSelector
+            manifest={manifest}
+            selected={selectedEngine}
+            selectedReleaseVersion={
+              selectedReleaseEngine?.version ?? manifest.channels.release.version
+            }
+            onChange={changeEngine}
+            onReleaseChange={changeReleaseVersion}
+          />
         )}
       </header>
 
@@ -218,18 +270,30 @@ export function App() {
       <main class="workspace">
         <section class="source-pane" aria-labelledby="source-heading">
           <div class="pane-toolbar">
-            <div>
+            <div class="source-heading-copy">
               <p class="pane-kicker">Input</p>
               <h2 id="source-heading">Spanner GoogleSQL / GQL</h2>
+              {loadedPreset !== null && (
+                <p class="loaded-preset">
+                  Preset <code>{loadedPreset.entry.path}</code>
+                  <span class={presetModified ? "preset-modified" : ""}>
+                    {presetModified ? "Modified" : "Loaded"}
+                  </span>
+                </p>
+              )}
             </div>
             <div class="parse-controls">
+              <PresetPicker
+                asset={manifest === null ? null : manifest.presets}
+                onLoad={loadPreset}
+              />
               <label class="select-label">
                 <span>Parse mode</span>
                 <select
-                  value={mode}
+                  value={effectiveMode}
                   onChange={(event) => changeMode(event.currentTarget.value as ParseMode)}
                 >
-                  {PARSE_MODES.map((parseMode) => (
+                  {availableParseModes.map((parseMode) => (
                     <option key={parseMode} value={parseMode}>
                       {MODE_LABELS[parseMode]}
                     </option>
@@ -346,15 +410,26 @@ export function App() {
 interface EngineSelectorProps {
   manifest: ResolvedVersionsManifest;
   selected: EngineChannel;
+  selectedReleaseVersion: string;
   onChange(engine: EngineChannel): void;
+  onReleaseChange(version: string): void;
 }
 
-export function EngineSelector({ manifest, selected, onChange }: EngineSelectorProps) {
+export function EngineSelector({
+  manifest,
+  selected,
+  selectedReleaseVersion,
+  onChange,
+  onReleaseChange,
+}: EngineSelectorProps) {
+  const selectedRelease =
+    manifest.releases?.find((engine) => engine.version === selectedReleaseVersion) ??
+    manifest.channels.release;
   return (
     <fieldset class="engine-selector">
       <legend>Parser engine</legend>
       {(["release", "main"] as const).map((channel) => {
-        const engine = manifest.channels[channel];
+        const engine = channel === "release" ? selectedRelease : manifest.channels.main;
         return (
           <label key={channel} class="engine-option">
             <input
@@ -365,7 +440,13 @@ export function EngineSelector({ manifest, selected, onChange }: EngineSelectorP
               onChange={() => onChange(channel)}
             />
             <span class="engine-option-copy">
-              <strong>{channel === "release" ? "Latest release" : "main snapshot"}</strong>
+              <strong>
+                {channel === "release"
+                  ? manifest.releases === undefined
+                    ? "Latest release"
+                    : "Release"
+                  : "main snapshot"}
+              </strong>
               <span>
                 {channel === "release" ? engine.version : "main"} · {shortCommit(engine.commit)}
               </span>
@@ -373,13 +454,32 @@ export function EngineSelector({ manifest, selected, onChange }: EngineSelectorP
           </label>
         );
       })}
+      {selected === "release" &&
+        manifest.releases !== undefined &&
+        manifest.releases.length > 1 && (
+          <label class="release-version-select">
+            <span>Release version</span>
+            <select
+              value={selectedReleaseVersion}
+              onChange={(event) => onReleaseChange(event.currentTarget.value)}
+            >
+              {manifest.releases.map((release, index) => (
+                <option key={release.version} value={release.version}>
+                  {release.version}
+                  {index === 0 ? " (latest)" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
     </fieldset>
   );
 }
 
-function EngineDetails({ engine }: { engine: ResolvedEngine }) {
+export function EngineDetails({ engine }: { engine: ResolvedEngine }) {
   const commitUrl = `https://github.com/cloudspannerecosystem/memefish/commit/${engine.commit}`;
   const releaseUrl = `https://github.com/cloudspannerecosystem/memefish/releases/tag/${encodeURIComponent(engine.version)}`;
+  const upstreamCI = upstreamCIAdvisory(engine);
 
   return (
     <aside class="engine-details" aria-label="Loaded engine identity">
@@ -397,11 +497,66 @@ function EngineDetails({ engine }: { engine: ResolvedEngine }) {
       )}
       <span>{engine.goVersion}</span>
       <span>{formatBytes(engine.bytes)} WASM</span>
+      {upstreamCI !== null &&
+        (upstreamCI.url === undefined ? (
+          <span class="upstream-ci" title={upstreamCI.title}>
+            {upstreamCI.label}
+          </span>
+        ) : (
+          <a class="upstream-ci" href={upstreamCI.url} rel="noreferrer" title={upstreamCI.title}>
+            {upstreamCI.label}
+          </a>
+        ))}
       <span>
         built <time dateTime={engine.builtAt}>{formatBuildTime(engine.builtAt)}</time>
       </span>
     </aside>
   );
+}
+
+interface UpstreamCIAdvisory {
+  label: string;
+  title: string;
+  url?: string;
+}
+
+function upstreamCIAdvisory(engine: ResolvedEngine): UpstreamCIAdvisory | null {
+  const upstreamCI = engine.upstreamCI;
+  if (upstreamCI !== undefined) {
+    switch (upstreamCI.status) {
+      case "passed":
+        return {
+          label: "Upstream CI passed",
+          title: `${upstreamCI.workflow} workflow concluded successfully (advisory only)`,
+          url: upstreamCI.url,
+        };
+      case "not_passed":
+        return {
+          label: "Upstream CI did not pass",
+          title: `${upstreamCI.workflow} workflow concluded ${upstreamCI.conclusion} (advisory only)`,
+          url: upstreamCI.url,
+        };
+      case "not_recorded":
+        return {
+          label: "Upstream CI not recorded",
+          title: "No matching completed upstream workflow run was recorded (advisory only)",
+        };
+      case "not_checked":
+        return {
+          label: "Upstream CI not checked",
+          title: "Upstream workflow status was not checked (advisory only)",
+        };
+    }
+  }
+
+  if (engine.ci !== undefined) {
+    return {
+      label: "Upstream CI passed",
+      title: `${engine.ci.workflow} workflow concluded successfully (advisory only)`,
+      url: engine.ci.url,
+    };
+  }
+  return null;
 }
 
 function Status({ status }: { status: StatusState }) {

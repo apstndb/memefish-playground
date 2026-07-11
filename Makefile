@@ -36,6 +36,7 @@ lint:
 
 test:
 	$(GO) test -race -shuffle=on -coverprofile=$(TMPDIR)/memefish-playground-coverage.out ./...
+	$(GO) test -tags=memefish_pre_v0_8 -run='^TestHandlerRejectsUnsupportedSchemaType$$' ./internal/bridge
 	npm run test:unit
 
 typecheck:

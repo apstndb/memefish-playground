@@ -22,6 +22,7 @@ const (
 )
 
 var errUnknownMode = errors.New("unknown parser mode")
+var errUnsupportedMode = errors.New("parser mode is not supported by this memefish version")
 
 // Engine identifies the memefish build serving a request.
 type Engine struct {
@@ -175,6 +176,13 @@ func (h *Handler) Handle(requestJSON string) (responseJSON string) {
 			fmt.Sprintf("unknown parser mode: %q", request.Mode),
 		))
 	}
+	if errors.Is(parseErr, errUnsupportedMode) {
+		return h.encodeResponse(h.fatalResponse(
+			request.ID,
+			"invalid_request",
+			fmt.Sprintf("parser mode %q is not supported by %s", request.Mode, h.engine.Version),
+		))
+	}
 
 	response.Results = makeResults(request.Source, nodes)
 	response.Diagnostics = makeDiagnostics(request.Source, parseErr)
@@ -219,7 +227,7 @@ func parse(mode, source string) ([]ast.Node, error) {
 		node, err := memefish.ParseType("", source)
 		return collectNode(node), err
 	case "schemaType":
-		node, err := memefish.ParseSchemaType("", source)
+		node, err := parseSchemaType(source)
 		return collectNode(node), err
 	case "ddl":
 		node, err := memefish.ParseDDL("", source)

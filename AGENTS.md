@@ -9,10 +9,14 @@ memefish-playground is a static GitHub Pages application. It compiles
 `github.com/cloudspannerecosystem/memefish` to Go WebAssembly and lets users
 parse and unparse Spanner GoogleSQL and GQL entirely in the browser.
 
-The deployed site contains two independently built engines:
+The deployed site contains independently built engines for:
 
-- the latest published memefish release;
-- the exact `main` commit resolved during the most recent deployment.
+- every stable memefish release tag, defaulting to the newest published release;
+- the newest `main` push commit with a successful upstream Go workflow.
+
+Upstream release CI is advisory and must be displayed separately from the
+playground's own verification. A release CI failure must not by itself remove a
+published tag or make an older release the default.
 
 Never describe the `main` engine as continuously live. Display its embedded
 commit and build time.
@@ -22,7 +26,13 @@ commit and build time.
 - `internal/bridge/` owns the host-testable parser protocol and AST projection.
 - `cmd/wasm/` is a minimal `syscall/js` adapter.
 - `src/` contains the Preact UI and Web Worker client.
-- `scripts/build-wasm.mjs` resolves and builds both memefish channels.
+- `scripts/build-wasm.mjs` resolves and builds all release engines plus `main`.
+- `scripts/resolve-memefish-refs.mjs` applies the release and `main` freshness
+  policies.
+- `scripts/memefish-capabilities.mjs` maps upstream API-version boundaries to
+  build tags and advertised parse modes.
+- `scripts/preset-catalog.mjs` snapshots every `.sql` input from the selected
+  main module's `testdata/input` tree.
 - `public/wasm/` is generated and must not be committed.
 
 Keep the structure flat. This small app uses no DI framework and no backend.
@@ -39,6 +49,8 @@ a concrete requirement justifies it.
 - memefish offsets are UTF-8 byte offsets. Browser editor ranges are UTF-16
   code-unit offsets; keep both and test non-ASCII input.
 - Cap input size. Parsing is synchronous inside a dedicated Worker.
+- Verify the selected WASM artifact's manifest size and SHA-256 digest before
+  instantiating it.
 - Projected AST JSON is a playground display format, not a stable memefish
   serialization format.
 
@@ -47,7 +59,7 @@ a concrete requirement justifies it.
 ```bash
 make fmt       # Go formatting plus Biome writes
 make test      # Go unit tests plus frontend unit tests
-make build     # resolve and build both WASM engines, then Vite production build
+make build     # build every release WASM plus main, then the Vite production site
 make check     # required local gate: formatting, tests, vet, typecheck, build
 make e2e       # Chromium smoke test against the production preview
 ```
@@ -64,9 +76,10 @@ Do not hand-edit or commit:
 - `coverage/`
 - Playwright reports
 
-The build must use content-addressed WASM filenames and generate version
-metadata containing the exact memefish version, commit, Go version, digest, and
-build time.
+The build must use content-addressed WASM and preset-catalog filenames and
+generate version metadata containing the exact memefish version, commit, Go
+version, digest, build time, and advisory upstream CI status. Do not fall back
+to unverified `@latest` or `@main` refs when exact GitHub refs are unavailable.
 
 ## Verification
 
@@ -74,7 +87,12 @@ build time.
   AST projection, and UTF-8-to-UTF-16 range conversion.
 - Add frontend tests for the Worker protocol and stale-response handling.
 - A Pages-affecting change must build with a non-root base path.
-- Browser smoke tests must parse with both release and main engines.
+- Browser smoke tests must cover the default release, a legacy release, and
+  `main`; every generated release artifact needs at least a lightweight parse
+  smoke check in CI.
+- Preset tests must verify exact source preservation, provenance and digest
+  validation, dynamic categories, expected-error cases, and that loading a
+  preset never switches engines.
 - Check generated asset sizes; WASM dominates the payload, so avoid eager
   loading both engines or adding IDE-sized frontend dependencies.
 

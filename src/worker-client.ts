@@ -77,6 +77,8 @@ export class MemefishClient {
       type: "initialize",
       wasmExecUrl: engine.wasmExecUrl,
       wasmUrl: engine.wasmUrl,
+      wasmBytes: engine.bytes,
+      wasmSha256: engine.sha256,
     });
     this.events.onLoading(engine);
   }
