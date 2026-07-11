@@ -9,7 +9,7 @@ offers the latest published memefish release and an exact snapshot of memefish
 `main`, with the embedded tag and commit shown in the UI.
 
 Open the playground at
-[cloudspannerecosystem.github.io/memefish-playground](https://cloudspannerecosystem.github.io/memefish-playground/).
+[apstndb.github.io/memefish-playground](https://apstndb.github.io/memefish-playground/).
 The scheduled Pages build refreshes the release and `main` snapshots every six
 hours; the UI shows exactly which commits are loaded.
 

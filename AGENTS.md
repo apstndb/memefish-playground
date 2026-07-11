@@ -1,7 +1,7 @@
 # AGENTS.md
 
 Guidance for contributors and coding agents working on
-`github.com/cloudspannerecosystem/memefish-playground`.
+`github.com/apstndb/memefish-playground`.
 
 ## Project
 

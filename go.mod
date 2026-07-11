@@ -1,4 +1,4 @@
-module github.com/cloudspannerecosystem/memefish-playground
+module github.com/apstndb/memefish-playground
 
 go 1.26.0
 

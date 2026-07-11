@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"syscall/js"
 
-	"github.com/cloudspannerecosystem/memefish-playground/internal/bridge"
+	"github.com/apstndb/memefish-playground/internal/bridge"
 )
 
 var (
