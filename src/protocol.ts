@@ -37,11 +37,25 @@ export interface SourceRange {
   to: number;
 }
 
+export type ProjectedScalar = string | number | boolean | null;
+
+export type ProjectedValue =
+  | ProjectedScalar
+  | ProjectedAST
+  | ProjectedValue[]
+  | { [key: string]: ProjectedValue };
+
+export interface ProjectedAST {
+  type: string;
+  fields: Record<string, ProjectedValue>;
+  range?: SourceRange;
+}
+
 export interface ParseResult {
   nodeType: string;
   range: SourceRange;
   sql: string;
-  ast: unknown;
+  ast: ProjectedAST;
 }
 
 export interface ParseDiagnostic {
@@ -188,12 +202,58 @@ function decodeResult(value: unknown): ParseResult {
     throw new ProtocolError("The WebAssembly bridge returned an invalid parse result.");
   }
 
+  const nodeType = requireNonEmptyString(value.nodeType, "result node type");
+  const ast = decodeProjectedAST(value.ast);
+  if (ast.type !== nodeType) {
+    throw new ProtocolError("The projected AST root does not match its result node type.");
+  }
+
   return {
-    nodeType: requireNonEmptyString(value.nodeType, "result node type"),
+    nodeType,
     range: decodeRange(value.range),
     sql: requireString(value.sql, "unparsed SQL"),
-    ast: value.ast,
+    ast,
   };
+}
+
+function decodeProjectedAST(value: unknown): ProjectedAST {
+  if (!isRecord(value) || !isRecord(value.fields)) {
+    throw new ProtocolError("The WebAssembly bridge returned an invalid projected AST node.");
+  }
+
+  const projected: ProjectedAST = {
+    type: requireNonEmptyString(value.type, "projected AST node type"),
+    fields: Object.fromEntries(
+      Object.entries(value.fields).map(([name, field]) => [name, decodeProjectedValue(field)]),
+    ),
+  };
+  if (value.range !== undefined) {
+    projected.range = decodeRange(value.range);
+  }
+  return projected;
+}
+
+function decodeProjectedValue(value: unknown): ProjectedValue {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean" ||
+    (typeof value === "number" && Number.isFinite(value))
+  ) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(decodeProjectedValue);
+  }
+  if (!isRecord(value)) {
+    throw new ProtocolError("The WebAssembly bridge returned an invalid projected AST value.");
+  }
+  if (typeof value.type === "string" && isRecord(value.fields)) {
+    return decodeProjectedAST(value);
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([name, field]) => [name, decodeProjectedValue(field)]),
+  );
 }
 
 function decodeDiagnostic(value: unknown): ParseDiagnostic {

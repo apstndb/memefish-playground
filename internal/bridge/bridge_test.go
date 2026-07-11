@@ -474,6 +474,7 @@ func TestHandlerJSONContract(t *testing.T) {
 		t,
 		projectedAST,
 		"type",
+		"range",
 		"fields",
 	)
 }

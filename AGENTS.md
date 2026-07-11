@@ -53,6 +53,11 @@ a concrete requirement justifies it.
   instantiating it.
 - Projected AST JSON is a playground display format, not a stable memefish
   serialization format.
+- Every valid projected AST node should carry both UTF-8 byte and UTF-16 source
+  offsets. Omit a node range when upstream positions are invalid; never clamp
+  or invent one.
+- Keep AST-tree-to-editor selection updates distinguishable from user editor
+  updates so the two-way synchronization cannot echo or steal tree focus.
 
 ## Commands
 
@@ -86,6 +91,9 @@ to unverified `@latest` or `@main` refs when exact GitHub refs are unavailable.
 - Add table-driven Go tests for parser modes, diagnostics, panic containment,
   AST projection, and UTF-8-to-UTF-16 range conversion.
 - Add frontend tests for the Worker protocol and stale-response handling.
+- AST inspection tests must cover nested node ranges, non-ASCII offsets,
+  half-open boundaries including EOF, keyboard tree navigation, bounded large
+  collections, and both directions of editor/tree synchronization.
 - A Pages-affecting change must build with a non-root base path.
 - Browser smoke tests must cover the default release, a legacy release, and
   `main`; every generated release artifact needs at least a lightweight parse

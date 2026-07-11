@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { AstTree, type AstTreeItem, buildAstTreeModel, findDeepestRangedAstNode } from "./ast-tree";
 import { type SelectionRequest, SqlEditor } from "./editor";
 import {
   loadVersionsManifest,
@@ -18,8 +19,10 @@ import {
 } from "./protocol";
 import { MemefishClient } from "./worker-client";
 
-type OutputTab = "ast" | "sql";
+type OutputTab = "ast" | "json" | "sql";
 type StatusTone = "neutral" | "working" | "success" | "error";
+
+const OUTPUT_TABS: readonly OutputTab[] = ["ast", "json", "sql"];
 
 interface StatusState {
   tone: StatusTone;
@@ -55,6 +58,8 @@ export function App() {
   const [response, setResponse] = useState<ParseResponse | null>(null);
   const [outputTab, setOutputTab] = useState<OutputTab>("ast");
   const [selectionRequest, setSelectionRequest] = useState<SelectionRequest | null>(null);
+  const [sourceSelectionOffset, setSourceSelectionOffset] = useState(0);
+  const [selectedAstItemId, setSelectedAstItemId] = useState<string | null>(null);
   const [fatalMessage, setFatalMessage] = useState<string | null>(null);
   const [loadedPreset, setLoadedPreset] = useState<LoadedPresetState | null>(null);
   const [status, setStatus] = useState<StatusState>({
@@ -74,6 +79,10 @@ export function App() {
   const effectiveMode = availableParseModes.includes(mode)
     ? mode
     : (availableParseModes[0] ?? "statement");
+  const astTreeModel = useMemo(
+    () => buildAstTreeModel(response?.results ?? [], source),
+    [response, source],
+  );
 
   const client = useMemo(
     () =>
@@ -163,6 +172,11 @@ export function App() {
   }, [client, effectiveMode, mode]);
 
   useEffect(() => {
+    const offset = Math.min(sourceSelectionOffset, astTreeModel.sourceLength);
+    setSelectedAstItemId(findDeepestRangedAstNode(astTreeModel, offset)?.id ?? null);
+  }, [astTreeModel, sourceSelectionOffset]);
+
+  useEffect(() => {
     if (manifest === null) {
       return;
     }
@@ -227,11 +241,31 @@ export function App() {
   };
 
   const selectDiagnostic = (diagnostic: ParseDiagnostic) => {
+    setSourceSelectionOffset(diagnostic.range.from);
+    setSelectedAstItemId(findDeepestRangedAstNode(astTreeModel, diagnostic.range.from)?.id ?? null);
     setSelectionRequest({
       from: diagnostic.range.from,
       to: diagnostic.range.to,
       token: ++selectionToken.current,
     });
+  };
+
+  const selectAstNode = (item: AstTreeItem) => {
+    if (item.range === null) {
+      return;
+    }
+    setSelectedAstItemId(item.id);
+    setSelectionRequest({
+      from: item.range.from,
+      to: item.range.to,
+      token: ++selectionToken.current,
+      focus: false,
+    });
+  };
+
+  const selectAstFromSource = (offset: number) => {
+    setSourceSelectionOffset(offset);
+    setSelectedAstItemId(findDeepestRangedAstNode(astTreeModel, offset)?.id ?? null);
   };
 
   const diagnostics = response?.diagnostics ?? [];
@@ -320,6 +354,7 @@ export function App() {
             diagnostics={diagnostics}
             selectionRequest={selectionRequest}
             onChange={changeSource}
+            onSelectionChange={selectAstFromSource}
             onParse={parseNow}
           />
 
@@ -339,7 +374,10 @@ export function App() {
             </div>
             <div class="tabs" role="tablist" aria-label="Parser output">
               <OutputTabButton tab="ast" selected={outputTab} onSelect={setOutputTab}>
-                AST
+                AST tree
+              </OutputTabButton>
+              <OutputTabButton tab="json" selected={outputTab} onSelect={setOutputTab}>
+                JSON
               </OutputTabButton>
               <OutputTabButton tab="sql" selected={outputTab} onSelect={setOutputTab}>
                 SQL
@@ -360,9 +398,35 @@ export function App() {
                 <span>The selected engine runs in a dedicated Web Worker.</span>
               </div>
             ) : (
+              <div class="ast-tree-panel">
+                <p class="ast-tree-hint">
+                  Select a ranged node to reveal its source. Moving the source cursor selects the
+                  deepest matching node.
+                </p>
+                <AstTree
+                  model={astTreeModel}
+                  selectedItemId={selectedAstItemId}
+                  onSelectNode={selectAstNode}
+                />
+              </div>
+            )}
+          </div>
+          <div
+            id="output-panel-json"
+            class="output-panel"
+            role="tabpanel"
+            aria-labelledby="output-tab-json"
+            hidden={outputTab !== "json"}
+          >
+            {response === null ? (
+              <div class="empty-output">
+                <p>No result yet.</p>
+                <span>The selected engine runs in a dedicated Web Worker.</span>
+              </div>
+            ) : (
               <textarea
                 class="output-text"
-                aria-label="AST output"
+                aria-label="AST JSON output"
                 value={formatAst(response)}
                 readOnly
                 wrap="off"
@@ -399,9 +463,14 @@ export function App() {
           Parsing happens locally. memefish reports syntax structure, not Cloud Spanner semantic
           validation.
         </p>
-        <a href="https://github.com/cloudspannerecosystem/memefish" rel="noreferrer">
-          memefish on GitHub
-        </a>
+        <nav class="footer-links" aria-label="Project repositories">
+          <a href="https://github.com/cloudspannerecosystem/memefish" rel="noreferrer">
+            memefish repository
+          </a>
+          <a href="https://github.com/apstndb/memefish-playground" rel="noreferrer">
+            memefish-playground repository
+          </a>
+        </nav>
       </footer>
     </div>
   );
@@ -636,7 +705,11 @@ function OutputTabButton({ tab, selected, onSelect, children }: OutputTabButtonP
         ) {
           event.preventDefault();
           const nextTab =
-            event.key === "Home" ? "ast" : event.key === "End" ? "sql" : otherTab(tab);
+            event.key === "Home"
+              ? "ast"
+              : event.key === "End"
+                ? "sql"
+                : adjacentTab(tab, event.key === "ArrowRight" ? 1 : -1);
           onSelect(nextTab);
           window.requestAnimationFrame(() =>
             document.getElementById(`output-tab-${nextTab}`)?.focus(),
@@ -701,6 +774,7 @@ function clearDebounce(timer: { current: number | null }): void {
   }
 }
 
-function otherTab(tab: OutputTab): OutputTab {
-  return tab === "ast" ? "sql" : "ast";
+export function adjacentTab(tab: OutputTab, direction: -1 | 1): OutputTab {
+  const index = OUTPUT_TABS.indexOf(tab);
+  return OUTPUT_TABS[(index + direction + OUTPUT_TABS.length) % OUTPUT_TABS.length] ?? "ast";
 }

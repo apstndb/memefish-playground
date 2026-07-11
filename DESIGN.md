@@ -13,6 +13,7 @@ Milestone 1 is deployed and verified at
 - Let the user reproduce behavior with every stable release tag.
 - Make every input fixture from the selected `main` snapshot available as an
   exact-source preset.
+- Inspect AST nodes as an expandable tree synchronized with source positions.
 - Deploy as a static GitHub Pages project site with no server-side runtime.
 - Keep engine identity visible and reproducible.
 - Stay responsive while Go parses by running each engine in a Web Worker.
@@ -98,9 +99,20 @@ always use a `results` array, including single-node modes, and distinguish:
 - fatal bridge failures, such as invalid requests, size limits, parser panics,
   or encoding failures.
 
-The AST projection recursively records concrete Go type names and exported
-fields. It is meant for inspection only. It may evolve with a protocol-version
-change and must not be presented as round-trippable memefish JSON.
+The AST projection recursively records concrete Go type names, exported fields,
+and optional source ranges for each AST node. Ranges retain memefish's UTF-8
+byte offsets and add JavaScript UTF-16 code-unit offsets. Invalid or
+unrepresentable node positions omit the optional range instead of inventing a
+location. The projection is meant for inspection only. It may evolve with a
+protocol-version change and must not be presented as round-trippable memefish
+JSON.
+
+The AST tree is derived from this projection. Selecting a ranged node sends a
+non-focusing CodeMirror selection request so keyboard focus remains in the
+tree. User-originated editor selection changes choose the deepest half-open
+node range, with an explicit end-of-source rule. Annotated external editor
+transactions prevent either direction from echoing into a feedback loop. The
+raw projection remains available on a separate JSON tab.
 
 ## Upstream constraints and workarounds
 

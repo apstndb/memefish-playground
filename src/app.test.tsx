@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/preact";
 import { describe, expect, it, vi } from "vitest";
-import { EngineDetails, EngineSelector } from "./app";
+import { adjacentTab, EngineDetails, EngineSelector } from "./app";
 import { resolveVersionsManifest } from "./manifest";
 
 const manifest = resolveVersionsManifest(
@@ -30,6 +30,15 @@ const manifest = resolveVersionsManifest(
   },
   "https://example.test/memefish-playground/wasm/versions.json",
 );
+
+describe("output tab navigation", () => {
+  it("moves through all three tabs and wraps in either direction", () => {
+    expect(adjacentTab("ast", 1)).toBe("json");
+    expect(adjacentTab("json", 1)).toBe("sql");
+    expect(adjacentTab("sql", 1)).toBe("ast");
+    expect(adjacentTab("ast", -1)).toBe("sql");
+  });
+});
 
 describe("EngineSelector", () => {
   it("exposes labeled radio controls and selects the requested snapshot", () => {

@@ -2,7 +2,7 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { defaultHighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { sql } from "@codemirror/lang-sql";
 import { type Diagnostic, setDiagnostics } from "@codemirror/lint";
-import { EditorState } from "@codemirror/state";
+import { Annotation, EditorState, type SelectionRange } from "@codemirror/state";
 import {
   drawSelection,
   EditorView,
@@ -19,6 +19,7 @@ export interface SelectionRequest {
   from: number;
   to: number;
   token: number;
+  focus?: boolean;
 }
 
 export interface SqlEditorProps {
@@ -26,22 +27,28 @@ export interface SqlEditorProps {
   diagnostics: ParseDiagnostic[];
   selectionRequest: SelectionRequest | null;
   onChange(value: string): void;
+  onSelectionChange(offset: number): void;
   onParse(): void;
 }
+
+const externalEditorUpdate = Annotation.define<boolean>();
 
 export function SqlEditor({
   value,
   diagnostics,
   selectionRequest,
   onChange,
+  onSelectionChange,
   onParse,
 }: SqlEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
+  const onSelectionChangeRef = useRef(onSelectionChange);
   const onParseRef = useRef(onParse);
 
   onChangeRef.current = onChange;
+  onSelectionChangeRef.current = onSelectionChange;
   onParseRef.current = onParse;
 
   useLayoutEffect(() => {
@@ -78,8 +85,14 @@ export function SqlEditor({
           ...historyKeymap,
         ]),
         EditorView.updateListener.of((update) => {
-          if (update.docChanged) {
+          const isExternalUpdate = update.transactions.some(
+            (transaction) => transaction.annotation(externalEditorUpdate) === true,
+          );
+          if (update.docChanged && !isExternalUpdate) {
             onChangeRef.current(update.state.doc.toString());
+          }
+          if (update.selectionSet && !isExternalUpdate) {
+            onSelectionChangeRef.current(selectionOffset(update.state.selection.main));
           }
         }),
       ],
@@ -100,7 +113,9 @@ export function SqlEditor({
     }
     view.dispatch({
       changes: { from: 0, to: view.state.doc.length, insert: value },
+      annotations: externalEditorUpdate.of(true),
     });
+    onSelectionChangeRef.current(selectionOffset(view.state.selection.main));
   }, [value]);
 
   useLayoutEffect(() => {
@@ -131,8 +146,11 @@ export function SqlEditor({
     view.dispatch({
       selection: { anchor: from, head: to },
       effects: EditorView.scrollIntoView(from, { y: "center" }),
+      annotations: externalEditorUpdate.of(true),
     });
-    view.focus();
+    if (selectionRequest.focus !== false) {
+      view.focus();
+    }
   }, [selectionRequest]);
 
   return <div class="editor-host" ref={containerRef} />;
@@ -140,4 +158,10 @@ export function SqlEditor({
 
 function clamp(value: number, maximum: number): number {
   return Math.max(0, Math.min(value, maximum));
+}
+
+export function selectionOffset(
+  selection: Pick<SelectionRange, "empty" | "from" | "head">,
+): number {
+  return selection.empty ? selection.head : selection.from;
 }

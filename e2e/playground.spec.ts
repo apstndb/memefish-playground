@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 
 interface TestCIVerification {
   url: string;
@@ -28,7 +28,7 @@ interface TestManifest {
   releases: TestEngine[];
 }
 
-test("loads every release plus main under the Pages base path", async ({ page }) => {
+test("synchronizes the AST tree and loads every release plus main", async ({ page }) => {
   test.setTimeout(300_000);
 
   const loadedWasmArtifacts = new Set<string>();
@@ -90,6 +90,81 @@ test("loads every release plus main under the Pages base path", async ({ page })
       label: `${release.version}${index === 0 ? " (latest)" : ""}`,
     })),
   );
+
+  await source.fill("SELECT 1 + 2");
+  await page.getByRole("button", { name: "Parse", exact: true }).click();
+  await expect(status).toContainText("Parsed", { timeout: 30_000 });
+
+  const astTree = page.getByRole("tree", { name: "Parsed AST" });
+  await expect(astTree).toBeVisible();
+  await source.press("Home");
+  for (let offset = 0; offset < 9; offset += 1) {
+    await source.press("ArrowRight");
+  }
+
+  const binaryExpression = astTree.getByRole("treeitem", { name: /Expr: BinaryExpr/ });
+  await expect(binaryExpression).toHaveAttribute("aria-selected", "true");
+  await expect(binaryExpression).toHaveAttribute("aria-expanded", "true");
+
+  const leftLiteral = astTree.getByRole("treeitem", { name: /Left: IntLiteral/ });
+  await leftLiteral.click();
+  await expect(leftLiteral).toHaveAttribute("aria-selected", "true");
+  await expect(leftLiteral).toBeFocused();
+  await expect
+    .poll(() => page.locator(".cm-selectionBackground").count(), {
+      message: "selecting a ranged AST node should highlight its source",
+    })
+    .toBeGreaterThan(0);
+
+  await page.getByRole("tab", { name: "JSON" }).click();
+  const astJsonOutput = page.getByRole("textbox", { name: "AST JSON output" });
+  await expect(astJsonOutput).toHaveValue(/"type": "BinaryExpr"/);
+  await expect(astJsonOutput).toHaveValue(/"range"/);
+
+  await page.getByRole("tab", { name: "SQL" }).click();
+  await expect(sqlOutput).toHaveValue("SELECT 1 + 2");
+
+  // Keep the tree hidden while parsing non-ASCII source and moving the cursor.
+  // Returning to the tab must reveal the UTF-16-selected node, while the node's
+  // byte offsets remain different in the JSON projection.
+  await page.getByRole("tab", { name: "JSON" }).click();
+  await source.fill("SELECT '😀' + 'é'");
+  await page.getByRole("button", { name: "Parse", exact: true }).click();
+  await expect(status).toContainText("Parsed", { timeout: 30_000 });
+  await source.press("Home");
+  for (let offset = 0; offset < 12; offset += 1) {
+    await source.press("ArrowRight");
+  }
+
+  await page.getByRole("tab", { name: "AST tree" }).click();
+  const unicodeBinaryExpression = astTree.getByRole("treeitem", { name: /Expr: BinaryExpr/ });
+  await expect(unicodeBinaryExpression).toHaveAttribute("aria-selected", "true");
+  const rightString = astTree.getByRole("treeitem", { name: /Right: StringLiteral/ });
+  await rightString.click();
+  await expect(rightString).toHaveAttribute("aria-selected", "true");
+  await expect(rightString).toBeFocused();
+  await expect(rightString).toHaveAttribute("aria-label", /UTF-16 14–17 · bytes 16–20/);
+
+  // Revealing an item beyond the first page must keep the DOM bounded, and
+  // the page controls must retain native keyboard activation inside the tree.
+  const manySelectItems = `SELECT ${Array.from({ length: 101 }, (_, index) => index).join(", ")}`;
+  await source.fill(manySelectItems);
+  await page.getByRole("button", { name: "Parse", exact: true }).click();
+  await expect(status).toContainText("Parsed", { timeout: 30_000 });
+  const previousResults = astTree.getByRole("button", {
+    name: "Show previous 100 Results items (100 before)",
+  });
+  await expect(previousResults).toBeVisible();
+  expect(await astTree.getByRole("treeitem").count()).toBeLessThan(140);
+
+  const pagedResults = astTree.getByRole("treeitem", { name: /Results: Array \(101\)/ });
+  await pagedResults.press("ArrowRight");
+  await expect(astTree.getByRole("treeitem", { name: /\[100\]: ExprSelectItem/ })).toBeFocused();
+
+  await previousResults.press("Enter");
+  const firstPageResult = astTree.getByRole("treeitem", { name: /\[0\]: ExprSelectItem/ });
+  await expect(firstPageResult).toBeVisible();
+  await expect(firstPageResult).toBeFocused();
 
   await page.getByRole("tab", { name: "SQL" }).click();
   for (const [index, release] of manifest.releases.entries()) {
@@ -171,6 +246,14 @@ test("loads every release plus main under the Pages base path", async ({ page })
   await expect(status).toContainText("Parsed");
   await expect(page.locator(".loaded-preset code")).toHaveText("query/select_star.sql");
   await expect(page.getByText("Loaded", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "memefish repository" })).toHaveAttribute(
+    "href",
+    "https://github.com/cloudspannerecosystem/memefish",
+  );
+  await expect(page.getByRole("link", { name: "memefish-playground repository" })).toHaveAttribute(
+    "href",
+    "https://github.com/apstndb/memefish-playground",
+  );
 });
 
 async function loadTestManifest(page: Page): Promise<TestManifest> {

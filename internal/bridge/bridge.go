@@ -83,7 +83,10 @@ type SourceRange struct {
 // ProjectedAST is a reflection-based display form of a memefish AST value.
 // It is not a stable serialization format.
 type ProjectedAST struct {
-	Type   string         `json:"type"`
+	Type string `json:"type"`
+	// Range is present only when the projected value is an AST node with valid
+	// source bounds.
+	Range  *SourceRange   `json:"range,omitempty"`
 	Fields map[string]any `json:"fields"`
 }
 
@@ -184,8 +187,9 @@ func (h *Handler) Handle(requestJSON string) (responseJSON string) {
 		))
 	}
 
-	response.Results = makeResults(request.Source, nodes)
-	response.Diagnostics = makeDiagnostics(request.Source, parseErr)
+	sourceIndex := newSourceIndex(request.Source)
+	response.Results = makeResults(sourceIndex, nodes)
+	response.Diagnostics = makeDiagnostics(sourceIndex, parseErr)
 	response.OK = parseErr == nil
 	return h.encodeResponse(response)
 }
@@ -273,20 +277,20 @@ func validNode(node ast.Node) bool {
 	return value.Kind() != reflect.Pointer || !value.IsNil()
 }
 
-func makeResults(source string, nodes []ast.Node) []Result {
+func makeResults(sourceIndex *sourceIndex, nodes []ast.Node) []Result {
 	results := make([]Result, 0, len(nodes))
 	for _, node := range nodes {
 		results = append(results, Result{
 			NodeType: concreteTypeName(reflect.TypeOf(node)),
-			Range:    newSourceRange(source, int(node.Pos()), int(node.End())),
+			Range:    sourceIndex.sourceRange(int(node.Pos()), int(node.End())),
 			SQL:      node.SQL(),
-			AST:      projectNode(node),
+			AST:      projectNodeWithSourceIndex(sourceIndex, node),
 		})
 	}
 	return results
 }
 
-func makeDiagnostics(source string, parseErr error) []Diagnostic {
+func makeDiagnostics(sourceIndex *sourceIndex, parseErr error) []Diagnostic {
 	diagnostics := []Diagnostic{}
 	if parseErr == nil {
 		return diagnostics
@@ -296,7 +300,7 @@ func makeDiagnostics(source string, parseErr error) []Diagnostic {
 	if !errors.As(parseErr, &multiError) {
 		return append(diagnostics, Diagnostic{
 			Message: parseErr.Error(),
-			Range:   newSourceRange(source, 0, 0),
+			Range:   sourceIndex.sourceRange(0, 0),
 		})
 	}
 
@@ -312,7 +316,7 @@ func makeDiagnostics(source string, parseErr error) []Diagnostic {
 		}
 		diagnostics = append(diagnostics, Diagnostic{
 			Message: parserError.Message,
-			Range:   newSourceRange(source, start, end),
+			Range:   sourceIndex.sourceRange(start, end),
 		})
 	}
 	return diagnostics

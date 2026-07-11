@@ -28,6 +28,17 @@ tracked project document, not a temporary agent scratch file.
 - [x] Cover catalog integrity, UI behavior, and a real preset with unit and
   browser tests.
 
+## Milestone 3: synchronized AST inspection
+
+- [x] Project a validated UTF-8 byte and UTF-16 source range for every AST
+  node that exposes valid memefish positions.
+- [x] Render an accessible, expandable AST tree with bounded rendering for
+  large collections.
+- [x] Synchronize tree selection with CodeMirror ranges in both directions
+  without stealing focus or creating selection loops.
+- [x] Keep the raw AST projection available on a separate JSON tab and cover
+  the interaction with unit and real-WASM browser tests.
+
 ## Later
 
 - [ ] Add shareable URL state after defining a practical source-size limit.

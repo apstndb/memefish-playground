@@ -10,7 +10,9 @@ snapshot. The default release is the newest published stable tag; upstream CI
 status is shown as advisory metadata, while the playground's own build and
 browser checks determine whether it can be deployed. Every `.sql` file under
 the exact `main` snapshot's `testdata/input` tree is available through the
-preset browser.
+preset browser. Parsed AST nodes are shown as an expandable tree; selecting a
+node highlights its source range, and moving the editor cursor reveals the
+deepest matching node.
 
 Open the playground at
 [apstndb.github.io/memefish-playground](https://apstndb.github.io/memefish-playground/).
