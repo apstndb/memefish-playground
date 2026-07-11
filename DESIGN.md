@@ -2,8 +2,8 @@
 
 ## Status
 
-Milestone 1 implemented. Publication and deployed-metadata verification are the
-remaining launch steps.
+Milestone 1 is deployed and verified at
+<https://apstndb.github.io/memefish-playground/>.
 
 ## Goals
 

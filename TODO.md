@@ -11,7 +11,7 @@ tracked project document, not a temporary agent scratch file.
 - [x] Implement the Preact editor, modes, diagnostics, AST, and SQL views.
 - [x] Add unit and Chromium smoke tests for both engines.
 - [x] Add CI and GitHub Pages deployment with a six-hour refresh schedule.
-- [ ] Publish the initial site and verify the deployed version metadata.
+- [x] Publish the initial site and verify the deployed version metadata.
 
 ## Later
 
