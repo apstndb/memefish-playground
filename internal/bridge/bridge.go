@@ -443,6 +443,16 @@ func goPrettyWorkExceedsLimit(node ast.Node) bool {
 			if value.IsNil() {
 				continue
 			}
+			if value.Len() == 0 {
+				continue
+			}
+			// pp folds large slices and arrays, but renders every map entry. Refuse
+			// work that cannot fit the budget before stacking all keys and values.
+			childDepth := item.depth + 1
+			childLimit := maxGoPrettyWork / max(deepest, childDepth, 1)
+			if valueCount > childLimit || value.Len() > (childLimit-valueCount)/2 {
+				return true
+			}
 			visit := projectionVisit{typeOf: value.Type(), pointer: value.Pointer()}
 			if _, ok := seen[visit]; ok {
 				continue
@@ -452,8 +462,8 @@ func goPrettyWorkExceedsLimit(node ast.Node) bool {
 			for iterator.Next() {
 				stack = append(
 					stack,
-					goPrettyWorkItem{value: iterator.Key(), depth: item.depth + 1},
-					goPrettyWorkItem{value: iterator.Value(), depth: item.depth + 1},
+					goPrettyWorkItem{value: iterator.Key(), depth: childDepth},
+					goPrettyWorkItem{value: iterator.Value(), depth: childDepth},
 				)
 			}
 		}

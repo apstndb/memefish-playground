@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/cloudspannerecosystem/memefish/token"
 )
 
 var testEngine = Engine{
@@ -17,6 +19,14 @@ var testEngine = Engine{
 }
 
 var ansiSGRPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+type goPrettyMapNode struct {
+	Values map[int]struct{}
+}
+
+func (*goPrettyMapNode) Pos() token.Pos { return token.InvalidPos }
+func (*goPrettyMapNode) End() token.Pos { return token.InvalidPos }
+func (*goPrettyMapNode) SQL() string    { return "" }
 
 func TestHandlerModes(t *testing.T) {
 	t.Parallel()
@@ -405,6 +415,26 @@ func TestGoPrettyComplexityPreflight(t *testing.T) {
 				t.Errorf("goPrettyWorkExceedsLimit() = %t, want %t", got, test.wantRefused)
 			}
 		})
+	}
+}
+
+func TestGoPrettyComplexityPreflightBoundsMapsBeforeStackingEntries(t *testing.T) {
+	t.Parallel()
+
+	if goPrettyWorkExceedsLimit(&goPrettyMapNode{Values: map[int]struct{}{}}) {
+		t.Fatal("goPrettyWorkExceedsLimit() = true, want empty map admitted")
+	}
+	if goPrettyWorkExceedsLimit(&goPrettyMapNode{Values: map[int]struct{}{1: {}}}) {
+		t.Fatal("goPrettyWorkExceedsLimit() = true, want small map admitted")
+	}
+
+	values := make(map[int]struct{}, maxGoPrettyWork/6+1)
+	for index := range maxGoPrettyWork/6 + 1 {
+		values[index] = struct{}{}
+	}
+
+	if !goPrettyWorkExceedsLimit(&goPrettyMapNode{Values: values}) {
+		t.Fatal("goPrettyWorkExceedsLimit() = false, want oversized map refusal")
 	}
 }
 
