@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 1 as const;
+export const PROTOCOL_VERSION = 2 as const;
 
 export const PARSE_MODES = [
   "statement",
@@ -21,6 +21,7 @@ export interface ParseRequest {
   id: string;
   mode: ParseMode;
   source: string;
+  goPrettyIndex: number | null;
 }
 
 export interface EngineIdentity {
@@ -55,6 +56,10 @@ export interface ParseResult {
   nodeType: string;
   range: SourceRange;
   sql: string;
+  goPretty?: string;
+  goPrettyDepthLimited?: boolean;
+  goPrettyTruncated?: boolean;
+  goPrettyRefused?: boolean;
   ast: ProjectedAST;
 }
 
@@ -96,12 +101,18 @@ export function isParseMode(value: unknown): value is ParseMode {
   return typeof value === "string" && PARSE_MODES.some((mode) => mode === value);
 }
 
-export function makeParseRequest(id: string, mode: ParseMode, source: string): ParseRequest {
+export function makeParseRequest(
+  id: string,
+  mode: ParseMode,
+  source: string,
+  goPrettyIndex: number | null = null,
+): ParseRequest {
   return {
     protocolVersion: PROTOCOL_VERSION,
     id,
     mode,
     source,
+    goPrettyIndex,
   };
 }
 
@@ -208,12 +219,40 @@ function decodeResult(value: unknown): ParseResult {
     throw new ProtocolError("The projected AST root does not match its result node type.");
   }
 
-  return {
+  const result: ParseResult = {
     nodeType,
     range: decodeRange(value.range),
     sql: requireString(value.sql, "unparsed SQL"),
     ast,
   };
+  if (value.goPretty !== undefined) {
+    result.goPretty = requireString(value.goPretty, "Go pretty-print output");
+  }
+  if (value.goPrettyDepthLimited !== undefined) {
+    result.goPrettyDepthLimited = requireBoolean(
+      value.goPrettyDepthLimited,
+      "Go pretty-print depth state",
+    );
+  }
+  if (value.goPrettyTruncated !== undefined) {
+    result.goPrettyTruncated = requireBoolean(
+      value.goPrettyTruncated,
+      "Go pretty-print truncation state",
+    );
+  }
+  if (value.goPrettyRefused !== undefined) {
+    result.goPrettyRefused = requireBoolean(value.goPrettyRefused, "Go pretty-print refusal state");
+  }
+  if (
+    result.goPretty === undefined &&
+    (result.goPrettyDepthLimited === true || result.goPrettyTruncated === true)
+  ) {
+    throw new ProtocolError("The WebAssembly bridge omitted limited Go pretty-print output.");
+  }
+  if (result.goPretty !== undefined && result.goPrettyRefused === true) {
+    throw new ProtocolError("The WebAssembly bridge returned refused Go pretty-print output.");
+  }
+  return result;
 }
 
 function decodeProjectedAST(value: unknown): ProjectedAST {
@@ -297,6 +336,13 @@ function requireOffset(value: unknown): number {
 
 function requireString(value: unknown, field: string): string {
   if (typeof value !== "string") {
+    throw new ProtocolError(`The WebAssembly bridge returned an invalid ${field}.`);
+  }
+  return value;
+}
+
+function requireBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") {
     throw new ProtocolError(`The WebAssembly bridge returned an invalid ${field}.`);
   }
   return value;

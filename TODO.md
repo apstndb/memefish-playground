@@ -38,11 +38,16 @@ tracked project document, not a temporary agent scratch file.
   without stealing focus or creating selection loops.
 - [x] Keep the raw AST projection available on a separate JSON tab and cover
   the interaction with unit and real-WASM browser tests.
+- [x] Add an on-demand colorized Go value view using `k0kubun/pp/v3`, with
+  browser-safe depth, complexity, byte, and ANSI SGR page limits and no
+  terminal-emulator dependency.
 
 ## Later
 
 - [ ] Add shareable URL state after defining a practical source-size limit.
 - [ ] Consider an upstream-triggered refresh only if daily freshness proves
   insufficient and a cross-repository credential is acceptable.
+- [ ] Add CI reporting and explicit regression budgets for raw and gzip sizes
+  of each WASM engine and the frontend bundle before adding more dependencies.
 - [ ] Evaluate AST tree virtualization only if real inputs demonstrate a need.
 - [ ] Add a comparison view only after the single-engine workflow is stable.

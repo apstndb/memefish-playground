@@ -71,6 +71,9 @@ test("synchronizes the AST tree and loads every release plus main", async ({ pag
   const status = page.getByRole("status");
   const source = page.getByRole("textbox", { name: "SQL or GQL source" });
   const sqlOutput = page.getByRole("textbox", { name: "SQL output" });
+  const goPrettyOutput = page.locator(".go-pretty-output");
+  const goPrettyTab = page.getByRole("tab", { name: "Go pretty" });
+  const sqlTab = page.getByRole("tab", { name: "SQL" });
   const releaseEngine = page.getByRole("radio", { name: /^Release/ });
   const mainEngine = page.getByRole("radio", { name: /main snapshot/ });
   const parseMode = page.getByRole("combobox", { name: "Parse mode" });
@@ -121,8 +124,33 @@ test("synchronizes the AST tree and loads every release plus main", async ({ pag
   await expect(astJsonOutput).toHaveValue(/"type": "BinaryExpr"/);
   await expect(astJsonOutput).toHaveValue(/"range"/);
 
-  await page.getByRole("tab", { name: "SQL" }).click();
+  await goPrettyTab.click();
+  await expect(goPrettyOutput).toContainText("&ast.QueryStatement");
+  await expect(goPrettyOutput.locator(".ansi-fg-green").first()).toBeVisible();
+  expect(await goPrettyOutput.textContent()).not.toContain("\u001b");
+  const goPrettyPanel = page.getByRole("tabpanel", { name: "Go pretty" });
+  await goPrettyPanel.focus();
+  await expect(goPrettyPanel).toBeFocused();
+  await goPrettyPanel.press("PageDown");
+  await expect(goPrettyPanel).toBeFocused();
+
+  await sqlTab.click();
   await expect(sqlOutput).toHaveValue("SELECT 1 + 2");
+
+  await parseMode.selectOption("statements");
+  await source.fill("SELECT 1; SELECT 2");
+  await page.getByRole("button", { name: "Parse", exact: true }).click();
+  await expect(status).toContainText("Parsed", { timeout: 30_000 });
+  await goPrettyTab.click();
+  await expect(goPrettyOutput).toContainText('Value: "1"');
+  const goPrettyResultNumber = page.getByRole("spinbutton", {
+    name: "Go pretty result number",
+  });
+  await expect(goPrettyResultNumber).toHaveValue("1");
+  await page.getByRole("button", { name: "Next Go pretty result" }).click();
+  await expect(goPrettyOutput).toContainText('Value: "2"');
+  await expect(goPrettyResultNumber).toHaveValue("2");
+  await parseMode.selectOption("statement");
 
   // Keep the tree hidden while parsing non-ASCII source and moving the cursor.
   // Returning to the tab must reveal the UTF-16-selected node, while the node's
@@ -166,7 +194,22 @@ test("synchronizes the AST tree and loads every release plus main", async ({ pag
   await expect(firstPageResult).toBeVisible();
   await expect(firstPageResult).toBeFocused();
 
-  await page.getByRole("tab", { name: "SQL" }).click();
+  // pp.BufferFoldThreshold is 1,024 in v3.5.1. Keep this exact boundary so a
+  // dependency update that changes folding or pagination is immediately clear.
+  const boundarySelectItems = `SELECT ${Array.from({ length: 1_024 }, (_, index) => index).join(", ")}`;
+  await source.fill(boundarySelectItems);
+  await page.getByRole("button", { name: "Parse", exact: true }).click();
+  await expect(status).toContainText("Parsed", { timeout: 30_000 });
+  await goPrettyTab.click();
+  await expect(page.getByText(/256 reflection levels/)).toBeVisible();
+  const nextGoPrettyPage = page.getByRole("button", { name: "Next Go pretty page" });
+  await expect(nextGoPrettyPage).toBeVisible();
+  expect(await goPrettyOutput.locator("span").count()).toBeLessThanOrEqual(2_000);
+  await nextGoPrettyPage.click();
+  await expect(page.getByText(/Page 2 of \d+/)).toBeVisible();
+  expect(await goPrettyOutput.locator("span").count()).toBeLessThanOrEqual(2_000);
+
+  await sqlTab.click();
   for (const [index, release] of manifest.releases.entries()) {
     if (index !== 0) {
       await releaseVersion.selectOption(release.version);
@@ -189,6 +232,9 @@ test("synchronizes the AST tree and loads every release plus main", async ({ pag
     await page.getByRole("button", { name: "Parse", exact: true }).click();
     await expect(status).toContainText("Parsed", { timeout: 30_000 });
     await expect(sqlOutput).toHaveValue("SELECT 1");
+    await goPrettyTab.click();
+    await expect(goPrettyOutput).toContainText("&ast.QueryStatement");
+    await sqlTab.click();
 
     if (index === 0) {
       // The bridge must contain an upstream panic so the long-lived Worker
@@ -222,6 +268,9 @@ test("synchronizes the AST tree and loads every release plus main", async ({ pag
   await page.getByRole("button", { name: "Parse", exact: true }).click();
   await expect(status).toContainText("Parsed", { timeout: 30_000 });
   await expect(sqlOutput).toHaveValue("SELECT 1");
+  await goPrettyTab.click();
+  await expect(goPrettyOutput).toContainText("&ast.QueryStatement");
+  await sqlTab.click();
 
   const presetTrigger = page.getByRole("button", { name: /Browse \d+ presets/ });
   await expect(presetTrigger).toBeEnabled();

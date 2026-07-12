@@ -3,6 +3,10 @@
 Guidance for contributors and coding agents working on
 `github.com/apstndb/memefish-playground`.
 
+If `HANDOVER.md` exists, read it before changing the working tree. It records
+the exact state, validation, and authority boundary of unfinished work and must
+be updated or removed when that work is published.
+
 ## Project
 
 memefish-playground is a static GitHub Pages application. It compiles
@@ -53,6 +57,14 @@ a concrete requirement justifies it.
   instantiating it.
 - Projected AST JSON is a playground display format, not a stable memefish
   serialization format.
+- `goPretty` is a display-only `k0kubun/pp/v3` rendering, not Go source or a
+  machine-readable contract. Generate it only for the result selected by
+  protocol-v2 `goPrettyIndex`; ordinary parsing must not invoke pp. Bound pp
+  with the documented reflection-depth, complexity-preflight, and raw-byte
+  limits, and return explicit depth-limited, truncated, or refused states.
+  Preserve ANSI SGR text across the Worker boundary, then render one result
+  through bounded token/line pages using only allowlisted text nodes and spans.
+  Never pass it through raw HTML or add a terminal emulator for this stream.
 - Every valid projected AST node should carry both UTF-8 byte and UTF-16 source
   offsets. Omit a node range when upstream positions are invalid; never clamp
   or invent one.
@@ -93,7 +105,10 @@ to unverified `@latest` or `@main` refs when exact GitHub refs are unavailable.
 - Add frontend tests for the Worker protocol and stale-response handling.
 - AST inspection tests must cover nested node ranges, non-ASCII offsets,
   half-open boundaries including EOF, keyboard tree navigation, bounded large
-  collections, and both directions of editor/tree synchronization.
+  collections, both directions of editor/tree synchronization, and safe ANSI
+  rendering plus multi-result pagination, documented Spanner nesting
+  boundaries, adversarial complexity refusal, and output limiting for the Go
+  pretty tab.
 - A Pages-affecting change must build with a non-root base path.
 - Browser smoke tests must cover the default release, a legacy release, and
   `main`; every generated release artifact needs at least a lightweight parse

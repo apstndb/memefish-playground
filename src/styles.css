@@ -20,6 +20,14 @@
   --working-soft: #fff3d6;
   --code: #101815;
   --code-surface: #eef2f0;
+  --ansi-black: #17201d;
+  --ansi-red: #b42318;
+  --ansi-green: #087c69;
+  --ansi-yellow: #8a5b00;
+  --ansi-blue: #245bb3;
+  --ansi-magenta: #8d3b92;
+  --ansi-cyan: #006b7d;
+  --ansi-white: #44504c;
   --shadow: 0 18px 42px rgba(34, 54, 47, 0.08);
 }
 
@@ -42,6 +50,14 @@
     --working-soft: #3a2d16;
     --code: #f0f5f2;
     --code-surface: #0f1714;
+    --ansi-black: #85938e;
+    --ansi-red: #ff8b82;
+    --ansi-green: #67d4b9;
+    --ansi-yellow: #f3bf54;
+    --ansi-blue: #7fb0ff;
+    --ansi-magenta: #dda0e6;
+    --ansi-cyan: #62cedc;
+    --ansi-white: #f0f5f2;
     --shadow: 0 22px 52px rgba(0, 0, 0, 0.28);
   }
 }
@@ -1032,6 +1048,182 @@ kbd {
   outline-offset: -0.18rem;
 }
 
+.go-pretty-output {
+  width: max-content;
+  min-width: 100%;
+  min-height: min(39rem, 70vh);
+  margin: 0;
+  padding: 1rem;
+  color: var(--code);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: clamp(0.75rem, 1.3vw, 0.85rem);
+  font-weight: 400;
+  line-height: 1.62;
+  tab-size: 2;
+  white-space: pre;
+  background: var(--code-surface);
+}
+
+.go-pretty-caption,
+.go-pretty-limit-notices {
+  margin: 0;
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.go-pretty-caption {
+  color: var(--muted);
+  background: var(--surface-raised);
+}
+
+.go-pretty-limit-notices {
+  color: var(--working);
+  background: var(--working-soft);
+}
+
+.go-pretty-limit-notices p {
+  margin: 0;
+}
+
+.go-pretty-limit-notices p + p {
+  margin-top: 0.35rem;
+}
+
+.go-pretty-navigation {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  left: 0;
+  display: flex;
+  width: 100%;
+  gap: 0.5rem 1rem;
+  padding: 0.55rem 0.7rem;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.7rem;
+  background: color-mix(in srgb, var(--surface-raised) 94%, transparent);
+  backdrop-filter: blur(0.35rem);
+}
+
+.go-pretty-navigation > fieldset,
+.go-pretty-navigation label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.go-pretty-navigation > fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.go-pretty-navigation legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.go-pretty-navigation button,
+.go-pretty-navigation input {
+  min-height: 1.9rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 0.38rem;
+  color: var(--ink);
+  font: inherit;
+  background: var(--surface);
+}
+
+.go-pretty-navigation button {
+  padding: 0.3rem 0.5rem;
+  cursor: pointer;
+}
+
+.go-pretty-navigation button:disabled {
+  color: var(--subtle);
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.go-pretty-navigation input {
+  width: 4.5rem;
+  padding: 0.25rem 0.4rem;
+}
+
+.ansi-bold {
+  font-weight: 750;
+}
+
+.ansi-fg-black {
+  color: var(--ansi-black);
+}
+
+.ansi-fg-red {
+  color: var(--ansi-red);
+}
+
+.ansi-fg-green {
+  color: var(--ansi-green);
+}
+
+.ansi-fg-yellow {
+  color: var(--ansi-yellow);
+}
+
+.ansi-fg-blue {
+  color: var(--ansi-blue);
+}
+
+.ansi-fg-magenta {
+  color: var(--ansi-magenta);
+}
+
+.ansi-fg-cyan {
+  color: var(--ansi-cyan);
+}
+
+.ansi-fg-white {
+  color: var(--ansi-white);
+}
+
+.ansi-bg-black {
+  background-color: color-mix(in srgb, var(--ansi-black) 28%, var(--code-surface));
+}
+
+.ansi-bg-red {
+  background-color: color-mix(in srgb, var(--ansi-red) 28%, var(--code-surface));
+}
+
+.ansi-bg-green {
+  background-color: color-mix(in srgb, var(--ansi-green) 28%, var(--code-surface));
+}
+
+.ansi-bg-yellow {
+  background-color: color-mix(in srgb, var(--ansi-yellow) 28%, var(--code-surface));
+}
+
+.ansi-bg-blue {
+  background-color: color-mix(in srgb, var(--ansi-blue) 28%, var(--code-surface));
+}
+
+.ansi-bg-magenta {
+  background-color: color-mix(in srgb, var(--ansi-magenta) 28%, var(--code-surface));
+}
+
+.ansi-bg-cyan {
+  background-color: color-mix(in srgb, var(--ansi-cyan) 28%, var(--code-surface));
+}
+
+.ansi-bg-white {
+  background-color: color-mix(in srgb, var(--ansi-white) 28%, var(--code-surface));
+}
+
 .empty-output {
   display: grid;
   min-height: 22rem;
@@ -1132,6 +1324,20 @@ footer p {
   .pane-toolbar {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .output-heading-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .tabs {
+    width: 100%;
+  }
+
+  .tabs button {
+    min-width: 0;
+    flex: 1;
   }
 
   .parse-controls {
