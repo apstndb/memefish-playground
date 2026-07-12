@@ -12,7 +12,11 @@ browser checks determine whether it can be deployed. Every `.sql` file under
 the exact `main` snapshot's `testdata/input` tree is available through the
 preset browser. Parsed AST nodes are shown as an expandable tree; selecting a
 node highlights its source range, and moving the editor cursor reveals the
-deepest matching node.
+deepest matching node. Separate output tabs expose the raw AST projection,
+unparsed SQL, and an on-demand colorized Go value rendering produced by
+[`k0kubun/pp/v3`](https://github.com/k0kubun/pp). The Go value view follows
+memefish's own omit-empty presentation and clearly reports browser depth,
+complexity, and output-size limits without affecting the other tabs.
 
 Open the playground at
 [apstndb.github.io/memefish-playground](https://apstndb.github.io/memefish-playground/).
@@ -25,6 +29,7 @@ remains advisory.
 ## Stack
 
 - Go 1.26 WebAssembly, isolated in a module Web Worker
+- `k0kubun/pp/v3` for display-only Go AST value rendering
 - Preact 10 and strict TypeScript 6
 - Vite 8.1 and CodeMirror 6
 - Biome, Vitest, and Playwright

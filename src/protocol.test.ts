@@ -8,9 +8,13 @@ const engine = {
   goVersion: "go1.26.5",
 };
 
-function responseWithAst(ast: unknown): string {
+function responseWithAst(
+  ast: unknown,
+  goPretty?: unknown,
+  limits: Record<string, unknown> = {},
+): string {
   return JSON.stringify({
-    protocolVersion: 1,
+    protocolVersion: 2,
     id: "ast",
     ok: true,
     engine,
@@ -19,6 +23,8 @@ function responseWithAst(ast: unknown): string {
         nodeType: "QueryStatement",
         range: { startByte: 0, endByte: 13, from: 0, to: 13 },
         sql: "SELECT 'é'",
+        ...(goPretty === undefined ? {} : { goPretty }),
+        ...limits,
         ast,
       },
     ],
@@ -28,6 +34,72 @@ function responseWithAst(ast: unknown): string {
 }
 
 describe("projected AST protocol", () => {
+  it("decodes ANSI-colored Go pretty-print output", () => {
+    const goPretty = "\u001b[32m&ast.QueryStatement\u001b[0m{}";
+    const message = decodeBridgeMessage(
+      responseWithAst({ type: "QueryStatement", fields: {} }, goPretty),
+    );
+
+    if ("type" in message) {
+      throw new Error("expected parse response");
+    }
+    expect(message.results[0]?.goPretty).toBe(goPretty);
+  });
+
+  it("accepts results without unrequested Go pretty-print output", () => {
+    const message = decodeBridgeMessage(responseWithAst({ type: "QueryStatement", fields: {} }));
+
+    if ("type" in message) {
+      throw new Error("expected parse response");
+    }
+    expect(message.results[0]?.goPretty).toBeUndefined();
+  });
+
+  it("decodes explicit Go pretty-print limit states", () => {
+    const message = decodeBridgeMessage(
+      responseWithAst({ type: "QueryStatement", fields: {} }, "bounded", {
+        goPrettyDepthLimited: true,
+        goPrettyTruncated: true,
+      }),
+    );
+
+    if ("type" in message) {
+      throw new Error("expected parse response");
+    }
+    expect(message.results[0]).toMatchObject({
+      goPretty: "bounded",
+      goPrettyDepthLimited: true,
+      goPrettyTruncated: true,
+    });
+
+    const refused = decodeBridgeMessage(
+      responseWithAst({ type: "QueryStatement", fields: {} }, undefined, { goPrettyRefused: true }),
+    );
+    if ("type" in refused) {
+      throw new Error("expected parse response");
+    }
+    expect(refused.results[0]?.goPrettyRefused).toBe(true);
+    expect(refused.results[0]?.goPretty).toBeUndefined();
+  });
+
+  it("rejects non-string Go pretty-print output", () => {
+    expect(() =>
+      decodeBridgeMessage(responseWithAst({ type: "QueryStatement", fields: {} }, 42)),
+    ).toThrow(ProtocolError);
+  });
+
+  it.each([
+    ["non-boolean limit state", "pretty", { goPrettyTruncated: "yes" }],
+    ["limited state without output", undefined, { goPrettyDepthLimited: true }],
+    ["refused state with output", "pretty", { goPrettyRefused: true }],
+  ])("rejects %s", (_name, goPretty, limits) => {
+    expect(() =>
+      decodeBridgeMessage(
+        responseWithAst({ type: "QueryStatement", fields: {} }, goPretty, limits),
+      ),
+    ).toThrow(ProtocolError);
+  });
+
   it("decodes nested node ranges and arbitrary projected values", () => {
     const message = decodeBridgeMessage(
       responseWithAst({

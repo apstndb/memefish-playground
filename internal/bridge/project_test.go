@@ -153,7 +153,7 @@ func TestMakeResultsUsesSharedSourceIndexForMultipleStatements(t *testing.T) {
 		t.Fatalf("parse() error = %v", err)
 	}
 	sourceIndex := newSourceIndex(source)
-	results := makeResults(sourceIndex, nodes)
+	results := makeResults(sourceIndex, nodes, nil)
 	wants := []struct {
 		root    SourceRange
 		literal SourceRange

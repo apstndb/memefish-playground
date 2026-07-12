@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { type AnsiStyle, paginateAnsiTokens, tokenizeAnsi } from "./ansi";
 import { AstTree, type AstTreeItem, buildAstTreeModel, findDeepestRangedAstNode } from "./ast-tree";
 import { type SelectionRequest, SqlEditor } from "./editor";
 import {
@@ -19,10 +20,12 @@ import {
 } from "./protocol";
 import { MemefishClient } from "./worker-client";
 
-type OutputTab = "ast" | "json" | "sql";
+type OutputTab = "ast" | "json" | "go" | "sql";
 type StatusTone = "neutral" | "working" | "success" | "error";
 
-const OUTPUT_TABS: readonly OutputTab[] = ["ast", "json", "sql"];
+const OUTPUT_TABS: readonly OutputTab[] = ["ast", "json", "go", "sql"];
+const GO_PRETTY_PAGE_MAX_TOKENS = 2_000;
+const GO_PRETTY_PAGE_MAX_LINE_BREAKS = 400;
 
 interface StatusState {
   tone: StatusTone;
@@ -57,6 +60,7 @@ export function App() {
   const [manifest, setManifest] = useState<ResolvedVersionsManifest | null>(null);
   const [response, setResponse] = useState<ParseResponse | null>(null);
   const [outputTab, setOutputTab] = useState<OutputTab>("ast");
+  const [goPrettyResultIndex, setGoPrettyResultIndex] = useState(0);
   const [selectionRequest, setSelectionRequest] = useState<SelectionRequest | null>(null);
   const [sourceSelectionOffset, setSourceSelectionOffset] = useState(0);
   const [selectedAstItemId, setSelectedAstItemId] = useState<string | null>(null);
@@ -69,6 +73,8 @@ export function App() {
   });
   const debounceTimer = useRef<number | null>(null);
   const selectionToken = useRef(0);
+  const outputTabRef = useRef<OutputTab>("ast");
+  const goPrettyResultIndexRef = useRef(0);
   const selectedReleaseEngine =
     manifest?.releases?.find((engine) => engine.version === selectedReleaseVersion) ??
     manifest?.channels.release ??
@@ -104,6 +110,11 @@ export function App() {
           });
         },
         onResponse: (nextResponse) => {
+          const lastResultIndex = Math.max(0, nextResponse.results.length - 1);
+          if (goPrettyResultIndexRef.current > lastResultIndex) {
+            goPrettyResultIndexRef.current = lastResultIndex;
+            setGoPrettyResultIndex(lastResultIndex);
+          }
           setResponse(nextResponse);
           setFatalMessage(nextResponse.fatal?.message ?? null);
 
@@ -182,7 +193,9 @@ export function App() {
     }
     clearDebounce(debounceTimer);
     debounceTimer.current = window.setTimeout(() => {
-      if (client.parse(effectiveMode, source) !== null) {
+      const requestedGoPrettyIndex =
+        outputTabRef.current === "go" ? goPrettyResultIndexRef.current : null;
+      if (client.parse(effectiveMode, source, requestedGoPrettyIndex) !== null) {
         setStatus({ tone: "working", label: "Parsing", message: "Parsing in the worker…" });
       }
       debounceTimer.current = null;
@@ -199,7 +212,9 @@ export function App() {
 
   const parseNow = () => {
     clearDebounce(debounceTimer);
-    if (client.parse(effectiveMode, source) !== null) {
+    const requestedGoPrettyIndex =
+      outputTabRef.current === "go" ? goPrettyResultIndexRef.current : null;
+    if (client.parse(effectiveMode, source, requestedGoPrettyIndex) !== null) {
       setStatus({ tone: "working", label: "Parsing", message: "Parsing in the worker…" });
     }
   };
@@ -207,6 +222,8 @@ export function App() {
   const invalidateParse = () => {
     client.invalidateRequests();
     setResponse(null);
+    goPrettyResultIndexRef.current = 0;
+    setGoPrettyResultIndex(0);
     if (manifest !== null) {
       setFatalMessage(null);
     }
@@ -230,6 +247,36 @@ export function App() {
   const changeSource = (nextSource: string) => {
     invalidateParse();
     setSource(nextSource);
+  };
+
+  const selectGoPrettyResult = (index: number) => {
+    if (index < 0 || (response !== null && index >= response.results.length)) {
+      return;
+    }
+    goPrettyResultIndexRef.current = index;
+    setGoPrettyResultIndex(index);
+    clearDebounce(debounceTimer);
+    if (client.parse(effectiveMode, source, index) !== null) {
+      setStatus({
+        tone: "working",
+        label: "Formatting",
+        message: `Formatting Go value for result ${index + 1} in the worker…`,
+      });
+    }
+  };
+
+  const selectOutputTab = (nextTab: OutputTab) => {
+    outputTabRef.current = nextTab;
+    setOutputTab(nextTab);
+    if (nextTab !== "go") {
+      return;
+    }
+
+    const index = goPrettyResultIndexRef.current;
+    const result = response?.results[index];
+    if (result?.goPretty === undefined && result?.goPrettyRefused !== true) {
+      selectGoPrettyResult(index);
+    }
   };
 
   const loadPreset = (entry: PresetEntry) => {
@@ -373,13 +420,16 @@ export function App() {
               <h2 id="output-heading">Parser result</h2>
             </div>
             <div class="tabs" role="tablist" aria-label="Parser output">
-              <OutputTabButton tab="ast" selected={outputTab} onSelect={setOutputTab}>
+              <OutputTabButton tab="ast" selected={outputTab} onSelect={selectOutputTab}>
                 AST tree
               </OutputTabButton>
-              <OutputTabButton tab="json" selected={outputTab} onSelect={setOutputTab}>
+              <OutputTabButton tab="json" selected={outputTab} onSelect={selectOutputTab}>
                 JSON
               </OutputTabButton>
-              <OutputTabButton tab="sql" selected={outputTab} onSelect={setOutputTab}>
+              <OutputTabButton tab="go" selected={outputTab} onSelect={selectOutputTab}>
+                Go pretty
+              </OutputTabButton>
+              <OutputTabButton tab="sql" selected={outputTab} onSelect={selectOutputTab}>
                 SQL
               </OutputTabButton>
             </div>
@@ -432,6 +482,28 @@ export function App() {
                 wrap="off"
               />
             )}
+          </div>
+          <div
+            id="output-panel-go"
+            class="output-panel"
+            role="tabpanel"
+            aria-labelledby="output-tab-go"
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: the scrollable colorized tabpanel needs a keyboard focus target.
+            tabIndex={0}
+            hidden={outputTab !== "go"}
+          >
+            {response === null ? (
+              <div class="empty-output">
+                <p>No result yet.</p>
+                <span>The selected engine runs in a dedicated Web Worker.</span>
+              </div>
+            ) : outputTab === "go" ? (
+              <GoPrettyOutput
+                response={response}
+                resultIndex={goPrettyResultIndex}
+                onSelectResult={selectGoPrettyResult}
+              />
+            ) : null}
           </div>
           <div
             id="output-panel-sql"
@@ -739,6 +811,179 @@ function formatSql(response: ParseResponse): string {
     return "-- No SQL result";
   }
   return response.results.map((result) => result.sql).join("\n\n");
+}
+
+interface GoPrettyOutputProps {
+  response: ParseResponse;
+  resultIndex: number;
+  onSelectResult(index: number): void;
+}
+
+export function GoPrettyOutput({ response, resultIndex, onSelectResult }: GoPrettyOutputProps) {
+  const [pageIndex, setPageIndex] = useState(0);
+  const [resultNumberDraft, setResultNumberDraft] = useState(String(resultIndex + 1));
+  const viewRef = useRef<HTMLDivElement>(null);
+  const text = formatGoPretty(response, resultIndex);
+  const tokens = useMemo(() => tokenizeAnsi(text), [text]);
+  const pages = useMemo(
+    () =>
+      paginateAnsiTokens(tokens, {
+        maxTokens: GO_PRETTY_PAGE_MAX_TOKENS,
+        maxLineBreaks: GO_PRETTY_PAGE_MAX_LINE_BREAKS,
+      }),
+    [tokens],
+  );
+  const pageCount = Math.max(1, pages.length);
+  const currentPageIndex = Math.min(pageIndex, pageCount - 1);
+  const visibleTokens = pages[currentPageIndex] ?? [];
+  const selectedResult = response.results[resultIndex];
+
+  useEffect(() => setPageIndex(0), [response.id, resultIndex]);
+  useEffect(() => setResultNumberDraft(String(resultIndex + 1)), [response.id, resultIndex]);
+  useEffect(() => {
+    const panel = viewRef.current?.closest(".output-panel");
+    if (panel instanceof HTMLElement) {
+      panel.scrollTop = 0;
+    }
+  }, [response.id, resultIndex, currentPageIndex]);
+
+  const commitResultNumber = (value: string) => {
+    const requested = Number(value);
+    if (Number.isInteger(requested) && requested >= 1 && requested <= response.results.length) {
+      setResultNumberDraft(String(requested));
+      if (requested - 1 !== resultIndex) {
+        onSelectResult(requested - 1);
+      }
+      return;
+    }
+    setResultNumberDraft(String(resultIndex + 1));
+  };
+
+  return (
+    <div ref={viewRef} class="go-pretty-view">
+      <p class="go-pretty-caption">
+        Uses memefish&apos;s pp rendering with empty fields omitted. Browser display limits are 256
+        reflection levels, 1 MiB of raw output, and a bounded complexity budget.
+      </p>
+      {(selectedResult?.goPrettyDepthLimited === true ||
+        selectedResult?.goPrettyTruncated === true ||
+        selectedResult?.goPrettyRefused === true) && (
+        <div class="go-pretty-limit-notices" role="status" aria-live="polite">
+          {selectedResult.goPrettyRefused === true && (
+            <p>
+              Go pretty rendering was skipped because this AST exceeds the browser complexity
+              budget. The other output tabs remain available.
+            </p>
+          )}
+          {selectedResult.goPrettyDepthLimited === true && (
+            <p>The reflection depth limit was reached; deeper fields may be omitted.</p>
+          )}
+          {selectedResult.goPrettyTruncated === true && (
+            <p>Go pretty output was truncated at the 1 MiB raw-text limit.</p>
+          )}
+        </div>
+      )}
+      {(response.results.length > 1 || pageCount > 1) && (
+        <div class="go-pretty-navigation">
+          {response.results.length > 1 && (
+            <fieldset>
+              <legend>Go pretty result navigation</legend>
+              <button
+                type="button"
+                aria-label="Previous Go pretty result"
+                disabled={resultIndex === 0}
+                onClick={() => onSelectResult(resultIndex - 1)}
+              >
+                Previous
+              </button>
+              <label>
+                <span>Result</span>
+                <input
+                  aria-label="Go pretty result number"
+                  type="number"
+                  min={1}
+                  max={response.results.length}
+                  value={resultNumberDraft}
+                  onInput={(event) => setResultNumberDraft(event.currentTarget.value)}
+                  onBlur={(event) => commitResultNumber(event.currentTarget.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      commitResultNumber(event.currentTarget.value);
+                    }
+                  }}
+                />
+              </label>
+              <span aria-live="polite">of {response.results.length}</span>
+              <button
+                type="button"
+                aria-label="Next Go pretty result"
+                disabled={resultIndex >= response.results.length - 1}
+                onClick={() => onSelectResult(resultIndex + 1)}
+              >
+                Next
+              </button>
+            </fieldset>
+          )}
+          {pageCount > 1 && (
+            <fieldset>
+              <legend>Go pretty page navigation</legend>
+              <button
+                type="button"
+                aria-label="Previous Go pretty page"
+                disabled={currentPageIndex === 0}
+                onClick={() => setPageIndex(currentPageIndex - 1)}
+              >
+                Previous page
+              </button>
+              <span aria-live="polite">
+                Page {currentPageIndex + 1} of {pageCount}
+              </span>
+              <button
+                type="button"
+                aria-label="Next Go pretty page"
+                disabled={currentPageIndex >= pageCount - 1}
+                onClick={() => setPageIndex(currentPageIndex + 1)}
+              >
+                Next page
+              </button>
+            </fieldset>
+          )}
+        </div>
+      )}
+      <pre class="go-pretty-output">
+        {visibleTokens.map((token, index) => (
+          <span key={index} class={ansiStyleClassName(token.style)}>
+            {token.text}
+          </span>
+        ))}
+      </pre>
+    </div>
+  );
+}
+
+function formatGoPretty(response: ParseResponse, resultIndex: number): string {
+  if (response.results.length === 0) {
+    return "// No Go pretty-print result";
+  }
+  const result = response.results[resultIndex];
+  if (result?.goPrettyRefused === true) {
+    return "// Go pretty rendering skipped by the browser complexity limit.";
+  }
+  return result?.goPretty ?? "// Go pretty print is not available yet for this result.";
+}
+
+function ansiStyleClassName(style: AnsiStyle): string | undefined {
+  const classes: string[] = [];
+  if (style.bold) {
+    classes.push("ansi-bold");
+  }
+  if (style.foreground !== undefined) {
+    classes.push(`ansi-fg-${style.foreground}`);
+  }
+  if (style.background !== undefined) {
+    classes.push(`ansi-bg-${style.background}`);
+  }
+  return classes.length === 0 ? undefined : classes.join(" ");
 }
 
 function shortCommit(commit: string): string {

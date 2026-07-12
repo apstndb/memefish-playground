@@ -63,13 +63,19 @@ describe("MemefishClient", () => {
 
     releaseWorker.emit(JSON.stringify(readyMessage(release)));
     expect(JSON.parse(releaseWorker.posted[1] as string)).toMatchObject({
+      protocolVersion: 2,
       id: "1:1",
       mode: "statement",
       source: "SELECT 1",
+      goPrettyIndex: null,
     });
 
-    const latestId = client.parse("statement", "SELECT 2");
+    const latestId = client.parse("statement", "SELECT 2", 0);
     expect(latestId).toBe("1:2");
+    expect(JSON.parse(releaseWorker.posted[2] as string)).toMatchObject({
+      id: "1:2",
+      goPrettyIndex: 0,
+    });
     releaseWorker.emit(JSON.stringify(parseResponse(release, "1:1", "SELECT 1")));
     expect(onResponse).not.toHaveBeenCalled();
     releaseWorker.emit(JSON.stringify(parseResponse(release, "1:2", "SELECT 2")));
@@ -146,14 +152,14 @@ function makeEngine(channel: EngineChannel): ResolvedEngine {
 function readyMessage(engine: ResolvedEngine) {
   return {
     type: "ready",
-    protocolVersion: 1,
+    protocolVersion: 2,
     engine: identity(engine),
   };
 }
 
 function parseResponse(engine: ResolvedEngine, id: string, sql: string): ParseResponse {
   return {
-    protocolVersion: 1,
+    protocolVersion: 2,
     id,
     ok: true,
     engine: identity(engine),

@@ -83,13 +83,13 @@ export class MemefishClient {
     this.events.onLoading(engine);
   }
 
-  parse(mode: ParseMode, source: string): string | null {
+  parse(mode: ParseMode, source: string, goPrettyIndex: number | null = null): string | null {
     if (this.worker === null || this.engine === null) {
       return null;
     }
 
     const id = `${this.generation}:${++this.requestSequence}`;
-    const request = makeParseRequest(id, mode, source);
+    const request = makeParseRequest(id, mode, source, goPrettyIndex);
     this.latestRequestId = id;
 
     if (this.ready) {

@@ -3,8 +3,12 @@ package bridge
 import (
 	"encoding/json"
 	"math"
+	"regexp"
 	"strings"
 	"testing"
+	"unicode/utf8"
+
+	"github.com/cloudspannerecosystem/memefish/token"
 )
 
 var testEngine = Engine{
@@ -13,6 +17,16 @@ var testEngine = Engine{
 	Commit:    "0123456789abcdef",
 	GoVersion: "go1.26.5",
 }
+
+var ansiSGRPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+type goPrettyMapNode struct {
+	Values map[int]struct{}
+}
+
+func (*goPrettyMapNode) Pos() token.Pos { return token.InvalidPos }
+func (*goPrettyMapNode) End() token.Pos { return token.InvalidPos }
+func (*goPrettyMapNode) SQL() string    { return "" }
 
 func TestHandlerModes(t *testing.T) {
 	t.Parallel()
@@ -143,6 +157,9 @@ func TestHandlerModes(t *testing.T) {
 			}
 
 			for index, result := range response.Results {
+				if result.GoPretty != "" {
+					t.Errorf("Results[%d].GoPretty is populated without an opt-in request", index)
+				}
 				if result.NodeType != test.wantNodeTypes[index] {
 					t.Errorf("Results[%d].NodeType = %q, want %q", index, result.NodeType, test.wantNodeTypes[index])
 				}
@@ -201,6 +218,379 @@ func TestHandlerPreservesPartialResultWithDiagnostics(t *testing.T) {
 	}
 }
 
+func TestHandlerGoPretty(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		source string
+		wantOK bool
+	}{
+		{
+			name:   "successful parse",
+			source: "SELECT 1 + 2",
+			wantOK: true,
+		},
+		{
+			name:   "recovered parse",
+			source: "SELECT 1 +",
+			wantOK: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			goPrettyIndex := 0
+
+			response := handleRequest(t, Request{
+				ProtocolVersion: ProtocolVersion,
+				ID:              test.name,
+				Mode:            "statement",
+				Source:          test.source,
+				GoPrettyIndex:   &goPrettyIndex,
+			})
+
+			if response.OK != test.wantOK {
+				t.Fatalf(
+					"OK = %t, want %t; fatal = %#v, diagnostics = %#v",
+					response.OK,
+					test.wantOK,
+					response.Fatal,
+					response.Diagnostics,
+				)
+			}
+			if response.Fatal != nil {
+				t.Fatalf("Fatal = %#v, want nil", response.Fatal)
+			}
+			if len(response.Results) != 1 {
+				t.Fatalf("len(Results) = %d, want 1", len(response.Results))
+			}
+
+			pretty := response.Results[0].GoPretty
+			if !strings.Contains(pretty, "\x1b[") {
+				t.Errorf("GoPretty has no ANSI SGR sequence: %q", pretty)
+			}
+			plain := ansiSGRPattern.ReplaceAllString(pretty, "")
+			if !strings.HasPrefix(plain, "&ast.QueryStatement{") {
+				t.Errorf("GoPretty without ANSI = %q, want QueryStatement prefix", plain)
+			}
+			if !strings.Contains(plain, "\n") || !strings.Contains(plain, "Query:") {
+				t.Errorf("GoPretty without ANSI = %q, want multiline field output", plain)
+			}
+			if strings.Contains(plain, "Hint:") {
+				t.Errorf("GoPretty without ANSI contains empty Hint field: %q", plain)
+			}
+		})
+	}
+}
+
+func TestHandlerGoPrettyBoundsDeepInput(t *testing.T) {
+	t.Parallel()
+
+	goPrettyIndex := 0
+	source := "SELECT " + strings.Repeat("(", 1_000) + "1" + strings.Repeat(")", 1_000)
+	response := handleRequest(t, Request{
+		ProtocolVersion: ProtocolVersion,
+		ID:              "deep-pretty",
+		Mode:            "query",
+		Source:          source,
+		GoPrettyIndex:   &goPrettyIndex,
+	})
+
+	if !response.OK || response.Fatal != nil {
+		t.Fatalf("response failed: fatal = %#v, diagnostics = %#v", response.Fatal, response.Diagnostics)
+	}
+	if len(response.Results) != 1 {
+		t.Fatalf("len(Results) = %d, want 1", len(response.Results))
+	}
+	result := response.Results[0]
+	if !result.GoPrettyDepthLimited {
+		t.Fatal("GoPrettyDepthLimited = false, want the browser depth limit disclosed")
+	}
+	if result.GoPrettyTruncated {
+		t.Fatal("GoPrettyTruncated = true, want depth limiting to keep this result below the byte cap")
+	}
+	if result.GoPrettyRefused {
+		t.Fatal("GoPrettyRefused = true, want a single deep chain to remain inspectable")
+	}
+	if len(result.GoPretty) >= MaxGoPrettyBytes {
+		t.Errorf("len(GoPretty) = %d, want output below %d bytes", len(result.GoPretty), MaxGoPrettyBytes)
+	}
+}
+
+func TestHandlerGoPrettyPreservesDocumentedNestingBoundaries(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		source     string
+		wantDetail string
+	}{
+		{
+			name:       "75 nested function calls",
+			source:     "SELECT " + strings.Repeat("ABS(", 75) + "1" + strings.Repeat(")", 75),
+			wantDetail: "IntLiteral",
+		},
+		{
+			name: "60 nested subselects",
+			source: strings.Repeat("SELECT (", 60) +
+				"SELECT 1" +
+				strings.Repeat(")", 60),
+			wantDetail: "IntLiteral",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			goPrettyIndex := 0
+			response := handleRequest(t, Request{
+				ProtocolVersion: ProtocolVersion,
+				ID:              test.name,
+				Mode:            "query",
+				Source:          test.source,
+				GoPrettyIndex:   &goPrettyIndex,
+			})
+
+			if !response.OK || response.Fatal != nil {
+				t.Fatalf("response failed: fatal = %#v, diagnostics = %#v", response.Fatal, response.Diagnostics)
+			}
+			result := response.Results[0]
+			if result.GoPrettyDepthLimited || result.GoPrettyTruncated || result.GoPrettyRefused {
+				t.Fatalf(
+					"Go pretty limits = depth:%t bytes:%t refused:%t, want complete output",
+					result.GoPrettyDepthLimited,
+					result.GoPrettyTruncated,
+					result.GoPrettyRefused,
+				)
+			}
+			plain := ansiSGRPattern.ReplaceAllString(result.GoPretty, "")
+			if !strings.Contains(plain, test.wantDetail) {
+				t.Errorf("GoPretty omits the deepest literal; want fragment %q", test.wantDetail)
+			}
+		})
+	}
+}
+
+func TestGoPrettyComplexityPreflight(t *testing.T) {
+	t.Parallel()
+
+	nestedItem := strings.Repeat("(", 100) + "1" + strings.Repeat(")", 100)
+	tests := []struct {
+		name        string
+		source      string
+		wantRefused bool
+	}{
+		{
+			name:   "documented function nesting boundary",
+			source: "SELECT " + strings.Repeat("ABS(", 75) + "1" + strings.Repeat(")", 75),
+		},
+		{
+			name:   "accepted deep parenthesis chain",
+			source: "SELECT " + strings.Repeat("(", 1_000) + "1" + strings.Repeat(")", 1_000),
+		},
+		{
+			name:   "folded large IN list",
+			source: "SELECT 1 IN (" + strings.TrimSuffix(strings.Repeat("1,", 10_000), ",") + ")",
+		},
+		{
+			name:        "wide and deep adversarial shape",
+			source:      "SELECT " + strings.TrimSuffix(strings.Repeat(nestedItem+",", 20), ","),
+			wantRefused: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			nodes, err := parse("query", test.source)
+			if err != nil {
+				t.Fatalf("parse() error = %v", err)
+			}
+			if len(nodes) != 1 {
+				t.Fatalf("len(nodes) = %d, want 1", len(nodes))
+			}
+			if got := goPrettyWorkExceedsLimit(nodes[0]); got != test.wantRefused {
+				t.Errorf("goPrettyWorkExceedsLimit() = %t, want %t", got, test.wantRefused)
+			}
+		})
+	}
+}
+
+func TestGoPrettyComplexityPreflightBoundsMapsBeforeStackingEntries(t *testing.T) {
+	t.Parallel()
+
+	if goPrettyWorkExceedsLimit(&goPrettyMapNode{Values: map[int]struct{}{}}) {
+		t.Fatal("goPrettyWorkExceedsLimit() = true, want empty map admitted")
+	}
+	if goPrettyWorkExceedsLimit(&goPrettyMapNode{Values: map[int]struct{}{1: {}}}) {
+		t.Fatal("goPrettyWorkExceedsLimit() = true, want small map admitted")
+	}
+
+	values := make(map[int]struct{}, maxGoPrettyWork/6+1)
+	for index := range maxGoPrettyWork/6 + 1 {
+		values[index] = struct{}{}
+	}
+
+	if !goPrettyWorkExceedsLimit(&goPrettyMapNode{Values: values}) {
+		t.Fatal("goPrettyWorkExceedsLimit() = false, want oversized map refusal")
+	}
+}
+
+func TestHandlerGoPrettyRefusesExcessiveComplexity(t *testing.T) {
+	t.Parallel()
+
+	nestedItem := strings.Repeat("(", 100) + "1" + strings.Repeat(")", 100)
+	source := "SELECT " + strings.TrimSuffix(strings.Repeat(nestedItem+",", 20), ",")
+	goPrettyIndex := 0
+	response := handleRequest(t, Request{
+		ProtocolVersion: ProtocolVersion,
+		ID:              "complex-pretty",
+		Mode:            "query",
+		Source:          source,
+		GoPrettyIndex:   &goPrettyIndex,
+	})
+
+	if !response.OK || response.Fatal != nil {
+		t.Fatalf("response failed: fatal = %#v, diagnostics = %#v", response.Fatal, response.Diagnostics)
+	}
+	result := response.Results[0]
+	if !result.GoPrettyRefused {
+		t.Fatal("GoPrettyRefused = false, want complexity refusal")
+	}
+	if result.GoPretty != "" {
+		t.Errorf("GoPretty = %q, want omitted output for a refused rendering", result.GoPretty)
+	}
+	if result.GoPrettyDepthLimited || result.GoPrettyTruncated {
+		t.Errorf(
+			"Go pretty limits = depth:%t bytes:%t, want refusal before formatting",
+			result.GoPrettyDepthLimited,
+			result.GoPrettyTruncated,
+		)
+	}
+}
+
+func TestHandlerGoPrettyPreservesDeepShippedFixture(t *testing.T) {
+	t.Parallel()
+
+	const source = `SELECT * FROM Singers
+UNION ALL
+(
+  SELECT * FROM Singers
+  UNION DISTINCT
+  (
+    SELECT * FROM Singers
+    INTERSECT ALL
+    (
+      SELECT * FROM Singers
+      INTERSECT DISTINCT
+      (
+        SELECT * FROM Singers
+        EXCEPT ALL
+        (
+          SELECT * FROM Singers
+          EXCEPT DISTINCT
+          SELECT * FROM Singers
+        )
+      )
+    )
+  )
+)
+`
+	goPrettyIndex := 0
+	response := handleRequest(t, Request{
+		ProtocolVersion: ProtocolVersion,
+		ID:              "fixture-pretty",
+		Mode:            "query",
+		Source:          source,
+		GoPrettyIndex:   &goPrettyIndex,
+	})
+
+	if !response.OK || response.Fatal != nil {
+		t.Fatalf("response failed: fatal = %#v, diagnostics = %#v", response.Fatal, response.Diagnostics)
+	}
+	result := response.Results[0]
+	if result.GoPrettyDepthLimited || result.GoPrettyTruncated || result.GoPrettyRefused {
+		t.Fatalf(
+			"Go pretty limits = depth:%t bytes:%t refused:%t, want full shipped fixture output",
+			result.GoPrettyDepthLimited,
+			result.GoPrettyTruncated,
+			result.GoPrettyRefused,
+		)
+	}
+	plain := ansiSGRPattern.ReplaceAllString(result.GoPretty, "")
+	if count := strings.Count(plain, `Op:            "EXCEPT"`); count != 2 {
+		t.Errorf("GoPretty has %d EXCEPT operations, want both nested operations", count)
+	}
+}
+
+func TestBoundGoPretty(t *testing.T) {
+	t.Parallel()
+
+	line := "\x1b[31m" + strings.Repeat("é", 256) + "\x1b[0m\n"
+	output := strings.Repeat(line, MaxGoPrettyBytes/len(line)+2)
+	bounded, truncated := boundGoPretty(output)
+
+	if !truncated {
+		t.Fatal("truncated = false, want true")
+	}
+	if len(bounded) > MaxGoPrettyBytes {
+		t.Errorf("len(bounded) = %d, want at most %d", len(bounded), MaxGoPrettyBytes)
+	}
+	if !utf8.ValidString(bounded) {
+		t.Fatal("bounded output is not valid UTF-8")
+	}
+	if !strings.HasSuffix(bounded, goPrettyTruncationMarker) {
+		t.Errorf("bounded output does not end with the truncation marker: %q", bounded[len(bounded)-96:])
+	}
+
+	unchanged := "\x1b[32mshort\x1b[0m"
+	if got, wasTruncated := boundGoPretty(unchanged); got != unchanged || wasTruncated {
+		t.Errorf("boundGoPretty(short) = (%q, %t), want unchanged output", got, wasTruncated)
+	}
+}
+
+func TestHandlerGoPrettyFormatsOnlySelectedResult(t *testing.T) {
+	t.Parallel()
+
+	goPrettyIndex := 1
+	request := Request{
+		ProtocolVersion: ProtocolVersion,
+		ID:              "selected-pretty",
+		Mode:            "statements",
+		Source:          "SELECT 1; SELECT 2",
+		GoPrettyIndex:   &goPrettyIndex,
+	}
+	responseJSON := NewHandler(testEngine).Handle(mustRequestJSON(t, request))
+	response := decodeResponse(t, responseJSON)
+	if !response.OK || response.Fatal != nil {
+		t.Fatalf("response failed: fatal = %#v, diagnostics = %#v", response.Fatal, response.Diagnostics)
+	}
+	if len(response.Results) != 2 {
+		t.Fatalf("len(Results) = %d, want 2", len(response.Results))
+	}
+	if response.Results[0].GoPretty != "" {
+		t.Errorf("Results[0].GoPretty = %q, want omitted", response.Results[0].GoPretty)
+	}
+	if !strings.Contains(response.Results[1].GoPretty, "\x1b[") {
+		t.Errorf("Results[1].GoPretty has no ANSI SGR sequence: %q", response.Results[1].GoPretty)
+	}
+
+	var rawResponse struct {
+		Results []map[string]json.RawMessage `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(responseJSON), &rawResponse); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if _, exists := rawResponse.Results[0]["goPretty"]; exists {
+		t.Error("Results[0] contains goPretty, want omitted key")
+	}
+	if _, exists := rawResponse.Results[1]["goPretty"]; !exists {
+		t.Error("Results[1] omits requested goPretty key")
+	}
+}
+
 func TestHandlerInvalidRequests(t *testing.T) {
 	t.Parallel()
 
@@ -217,26 +607,56 @@ func TestHandlerInvalidRequests(t *testing.T) {
 		},
 		{
 			name:        "trailing JSON",
-			requestJSON: `{"protocolVersion":1,"id":"trailing","mode":"query","source":"SELECT 1"} {}`,
+			requestJSON: `{"protocolVersion":2,"id":"trailing","mode":"query","source":"SELECT 1"} {}`,
 			wantID:      "trailing",
 			messagePart: "multiple JSON values",
 		},
 		{
 			name:        "unknown field",
-			requestJSON: `{"protocolVersion":1,"id":"extra","mode":"query","source":"SELECT 1","extra":true}`,
+			requestJSON: `{"protocolVersion":2,"id":"extra","mode":"query","source":"SELECT 1","extra":true}`,
 			wantID:      "extra",
 			messagePart: "unknown field",
 		},
 		{
 			name: "wrong protocol",
 			requestJSON: mustRequestJSON(t, Request{
-				ProtocolVersion: 2,
+				ProtocolVersion: 1,
 				ID:              "protocol",
 				Mode:            "query",
 				Source:          "SELECT 1",
 			}),
 			wantID:      "protocol",
 			messagePart: "unsupported protocol version",
+		},
+		{
+			name: "negative go pretty index",
+			requestJSON: func() string {
+				index := -1
+				return mustRequestJSON(t, Request{
+					ProtocolVersion: ProtocolVersion,
+					ID:              "negative-pretty",
+					Mode:            "query",
+					Source:          "SELECT 1",
+					GoPrettyIndex:   &index,
+				})
+			}(),
+			wantID:      "negative-pretty",
+			messagePart: "must not be negative",
+		},
+		{
+			name: "out-of-range go pretty index",
+			requestJSON: func() string {
+				index := 1
+				return mustRequestJSON(t, Request{
+					ProtocolVersion: ProtocolVersion,
+					ID:              "range-pretty",
+					Mode:            "query",
+					Source:          "SELECT 1",
+					GoPrettyIndex:   &index,
+				})
+			}(),
+			wantID:      "range-pretty",
+			messagePart: "out of range",
 		},
 		{
 			name: "empty id",
@@ -397,12 +817,14 @@ func TestHandlerJSONArraysAreNeverNull(t *testing.T) {
 
 func TestHandlerJSONContract(t *testing.T) {
 	t.Parallel()
+	goPrettyIndex := 0
 
 	responseJSON := NewHandler(testEngine).Handle(mustRequestJSON(t, Request{
 		ProtocolVersion: ProtocolVersion,
 		ID:              "contract",
 		Mode:            "query",
 		Source:          "SELECT 1",
+		GoPrettyIndex:   &goPrettyIndex,
 	}))
 
 	var response map[string]json.RawMessage
@@ -450,6 +872,7 @@ func TestHandlerJSONContract(t *testing.T) {
 		"nodeType",
 		"range",
 		"sql",
+		"goPretty",
 		"ast",
 	)
 
@@ -509,7 +932,7 @@ func TestHandlerReadyJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadyJSON() error = %v", err)
 	}
-	want := `{"type":"ready","protocolVersion":1,` +
+	want := `{"type":"ready","protocolVersion":2,` +
 		`"engine":{"channel":"release","version":"v0.8.0",` +
 		`"commit":"0123456789abcdef","goVersion":"go1.26.5"}}`
 	if readyJSON != want {

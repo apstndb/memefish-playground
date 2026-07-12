@@ -11,14 +11,37 @@ import (
 
 	"github.com/cloudspannerecosystem/memefish"
 	"github.com/cloudspannerecosystem/memefish/ast"
+	"github.com/k0kubun/pp/v3"
 )
 
 const (
 	// ProtocolVersion is the JSON bridge protocol implemented by this package.
-	ProtocolVersion = 1
+	ProtocolVersion = 2
 
 	// MaxSourceBytes is the largest source accepted by a parse request.
 	MaxSourceBytes = 1 << 20
+
+	// MaxGoPrettyBytes is the largest raw Go pretty-print string returned for
+	// one result. JSON escaping can make the encoded response larger.
+	MaxGoPrettyBytes = 1 << 20
+
+	// maxGoPrettyDepth renders the documented Spanner nesting boundaries that
+	// require the deepest pp output: 75 function calls need about 230 levels
+	// and 60 subselects need about 245. Bare parentheses have no documented
+	// service limit, so deeper values are disclosed as depth-limited.
+	maxGoPrettyDepth = 256
+
+	// maxGoPrettyWork bounds reflection work before invoking pp. Calibration
+	// units (visited values * deepest visited level) are approximately:
+	// ABS x75=146K, parentheses x1000=108K, IN x10000=375, and 500
+	// depth-100 select items=53M.
+	maxGoPrettyWork = 1_500_000
+)
+
+const (
+	goPrettyReset            = "\x1b[0m"
+	goPrettyTruncationMarker = goPrettyReset +
+		"\n// Go pretty output truncated at the 1 MiB display limit.\n"
 )
 
 var errUnknownMode = errors.New("unknown parser mode")
@@ -32,15 +55,16 @@ type Engine struct {
 	GoVersion string `json:"goVersion"`
 }
 
-// Request is a protocol version 1 parse request.
+// Request is a protocol version 2 parse request.
 type Request struct {
 	ProtocolVersion int    `json:"protocolVersion"`
 	ID              string `json:"id"`
 	Mode            string `json:"mode"`
 	Source          string `json:"source"`
+	GoPrettyIndex   *int   `json:"goPrettyIndex,omitempty"`
 }
 
-// Response is a protocol version 1 parse response.
+// Response is a protocol version 2 parse response.
 type Response struct {
 	ProtocolVersion int          `json:"protocolVersion"`
 	ID              string       `json:"id"`
@@ -53,10 +77,14 @@ type Response struct {
 
 // Result describes one parsed AST root.
 type Result struct {
-	NodeType string       `json:"nodeType"`
-	Range    SourceRange  `json:"range"`
-	SQL      string       `json:"sql"`
-	AST      ProjectedAST `json:"ast"`
+	NodeType             string       `json:"nodeType"`
+	Range                SourceRange  `json:"range"`
+	SQL                  string       `json:"sql"`
+	GoPretty             string       `json:"goPretty,omitempty"`
+	GoPrettyDepthLimited bool         `json:"goPrettyDepthLimited,omitempty"`
+	GoPrettyTruncated    bool         `json:"goPrettyTruncated,omitempty"`
+	GoPrettyRefused      bool         `json:"goPrettyRefused,omitempty"`
+	AST                  ProjectedAST `json:"ast"`
 }
 
 // Diagnostic describes a recoverable parser error.
@@ -170,6 +198,13 @@ func (h *Handler) Handle(requestJSON string) (responseJSON string) {
 			fmt.Sprintf("source exceeds %d-byte limit", MaxSourceBytes),
 		))
 	}
+	if request.GoPrettyIndex != nil && *request.GoPrettyIndex < 0 {
+		return h.encodeResponse(h.fatalResponse(
+			request.ID,
+			"invalid_request",
+			"go pretty index must not be negative",
+		))
+	}
 
 	nodes, parseErr := parse(request.Mode, request.Source)
 	if errors.Is(parseErr, errUnknownMode) {
@@ -186,9 +221,20 @@ func (h *Handler) Handle(requestJSON string) (responseJSON string) {
 			fmt.Sprintf("parser mode %q is not supported by %s", request.Mode, h.engine.Version),
 		))
 	}
+	if request.GoPrettyIndex != nil && len(nodes) > 0 && *request.GoPrettyIndex >= len(nodes) {
+		return h.encodeResponse(h.fatalResponse(
+			request.ID,
+			"invalid_request",
+			fmt.Sprintf(
+				"go pretty index %d is out of range for %d results",
+				*request.GoPrettyIndex,
+				len(nodes),
+			),
+		))
+	}
 
 	sourceIndex := newSourceIndex(request.Source)
-	response.Results = makeResults(sourceIndex, nodes)
+	response.Results = makeResults(sourceIndex, nodes, request.GoPrettyIndex)
 	response.Diagnostics = makeDiagnostics(sourceIndex, parseErr)
 	response.OK = parseErr == nil
 	return h.encodeResponse(response)
@@ -277,17 +323,183 @@ func validNode(node ast.Node) bool {
 	return value.Kind() != reflect.Pointer || !value.IsNil()
 }
 
-func makeResults(sourceIndex *sourceIndex, nodes []ast.Node) []Result {
+func makeResults(sourceIndex *sourceIndex, nodes []ast.Node, goPrettyIndex *int) []Result {
+	var prettyPrinter *pp.PrettyPrinter
+	if goPrettyIndex != nil && *goPrettyIndex >= 0 && *goPrettyIndex < len(nodes) {
+		prettyPrinter = pp.New()
+		prettyPrinter.SetColoringEnabled(true)
+		prettyPrinter.SetMaxDepth(maxGoPrettyDepth)
+		prettyPrinter.SetOmitEmpty(true)
+	}
+
 	results := make([]Result, 0, len(nodes))
-	for _, node := range nodes {
-		results = append(results, Result{
+	for index, node := range nodes {
+		result := Result{
 			NodeType: concreteTypeName(reflect.TypeOf(node)),
 			Range:    sourceIndex.sourceRange(int(node.Pos()), int(node.End())),
 			SQL:      node.SQL(),
 			AST:      projectNodeWithSourceIndex(sourceIndex, node),
-		})
+		}
+		if prettyPrinter != nil && index == *goPrettyIndex {
+			if goPrettyWorkExceedsLimit(node) {
+				result.GoPrettyRefused = true
+			} else {
+				output := prettyPrinter.Sprint(node)
+				result.GoPrettyDepthLimited = goPrettyDepthLimitReached(output)
+				result.GoPretty, result.GoPrettyTruncated = boundGoPretty(output)
+			}
+		}
+		results = append(results, result)
 	}
 	return results
+}
+
+type goPrettyWorkItem struct {
+	value reflect.Value
+	depth int
+}
+
+func goPrettyWorkExceedsLimit(node ast.Node) bool {
+	stack := []goPrettyWorkItem{{value: reflect.ValueOf(node)}}
+	seen := map[projectionVisit]struct{}{}
+	valueCount := 0
+	deepest := 0
+
+	for len(stack) > 0 {
+		item := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		value := item.value
+		if !value.IsValid() || item.depth > maxGoPrettyDepth {
+			continue
+		}
+
+		valueCount++
+		deepest = max(deepest, item.depth)
+		if valueCount > maxGoPrettyWork/max(deepest, 1) {
+			return true
+		}
+
+		switch value.Kind() {
+		case reflect.Interface:
+			if !value.IsNil() {
+				stack = append(stack, goPrettyWorkItem{
+					value: value.Elem(),
+					depth: item.depth + 1,
+				})
+			}
+		case reflect.Pointer:
+			if value.IsNil() {
+				continue
+			}
+			visit := projectionVisit{typeOf: value.Type(), pointer: value.Pointer()}
+			if _, ok := seen[visit]; ok {
+				continue
+			}
+			seen[visit] = struct{}{}
+			stack = append(stack, goPrettyWorkItem{
+				value: value.Elem(),
+				depth: item.depth + 1,
+			})
+		case reflect.Struct:
+			valueType := value.Type()
+			for index := range value.NumField() {
+				fieldType := valueType.Field(index)
+				field := value.Field(index)
+				if fieldType.PkgPath == "" && !field.IsZero() {
+					stack = append(stack, goPrettyWorkItem{
+						value: field,
+						depth: item.depth + 1,
+					})
+				}
+			}
+		case reflect.Slice:
+			if value.Len() > pp.BufferFoldThreshold {
+				continue
+			}
+			if !value.IsNil() {
+				visit := projectionVisit{typeOf: value.Type(), pointer: value.Pointer()}
+				if _, ok := seen[visit]; ok {
+					continue
+				}
+				seen[visit] = struct{}{}
+			}
+			for index := range value.Len() {
+				stack = append(stack, goPrettyWorkItem{
+					value: value.Index(index),
+					depth: item.depth + 1,
+				})
+			}
+		case reflect.Array:
+			if value.Len() > pp.BufferFoldThreshold {
+				continue
+			}
+			for index := range value.Len() {
+				stack = append(stack, goPrettyWorkItem{
+					value: value.Index(index),
+					depth: item.depth + 1,
+				})
+			}
+		case reflect.Map:
+			if value.IsNil() {
+				continue
+			}
+			if value.Len() == 0 {
+				continue
+			}
+			// pp folds large slices and arrays, but renders every map entry. Refuse
+			// work that cannot fit the budget before stacking all keys and values.
+			childDepth := item.depth + 1
+			childLimit := maxGoPrettyWork / max(deepest, childDepth, 1)
+			if valueCount > childLimit || value.Len() > (childLimit-valueCount)/2 {
+				return true
+			}
+			visit := projectionVisit{typeOf: value.Type(), pointer: value.Pointer()}
+			if _, ok := seen[visit]; ok {
+				continue
+			}
+			seen[visit] = struct{}{}
+			iterator := value.MapRange()
+			for iterator.Next() {
+				stack = append(
+					stack,
+					goPrettyWorkItem{value: iterator.Key(), depth: childDepth},
+					goPrettyWorkItem{value: iterator.Value(), depth: childDepth},
+				)
+			}
+		}
+	}
+
+	return false
+}
+
+func goPrettyDepthLimitReached(output string) bool {
+	const maxIndent = maxGoPrettyDepth * 2
+	for line := range strings.SplitSeq(output, "\n") {
+		indent := 0
+		for indent < len(line) && line[indent] == ' ' {
+			indent++
+		}
+		if indent >= maxIndent {
+			return true
+		}
+	}
+	return false
+}
+
+func boundGoPretty(output string) (string, bool) {
+	if len(output) <= MaxGoPrettyBytes {
+		return output, false
+	}
+
+	// pp emits multiline struct output. Cutting on a newline cannot split a
+	// UTF-8 rune or ANSI SGR sequence. Reset the style for copied terminal text
+	// as well as for the browser renderer.
+	prefixBudget := MaxGoPrettyBytes - len(goPrettyTruncationMarker)
+	lineEnd := strings.LastIndexByte(output[:prefixBudget], '\n')
+	if lineEnd < 0 {
+		return goPrettyTruncationMarker, true
+	}
+	return output[:lineEnd+1] + goPrettyTruncationMarker, true
 }
 
 func makeDiagnostics(sourceIndex *sourceIndex, parseErr error) []Diagnostic {
@@ -360,7 +572,7 @@ func (h *Handler) encodeResponse(response Response) string {
 	// The fallback contains only strings, booleans, and initialized slices, so
 	// encoding it cannot fail with the standard library encoder. Keep a valid
 	// protocol response as a final guard against future type changes.
-	return `{"protocolVersion":1,"id":"","ok":false,` +
+	return `{"protocolVersion":2,"id":"","ok":false,` +
 		`"engine":{"channel":"","version":"","commit":"","goVersion":""},` +
 		`"results":[],"diagnostics":[],` +
 		`"fatal":{"kind":"encode_failure","message":"response encoding failed"}}`
