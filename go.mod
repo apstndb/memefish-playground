@@ -6,12 +6,12 @@ toolchain go1.26.5
 
 require (
 	github.com/cloudspannerecosystem/memefish v0.8.0
-	github.com/k0kubun/pp/v3 v3.5.1
+	github.com/k0kubun/pp/v3 v3.5.2
 )
 
 require (
-	github.com/mattn/go-colorable v0.1.14 // indirect
+	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	golang.org/x/sys v0.29.0 // indirect
-	golang.org/x/text v0.32.0 // indirect
+	golang.org/x/text v0.38.0 // indirect
 )
