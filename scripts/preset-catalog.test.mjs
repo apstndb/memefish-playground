@@ -21,6 +21,51 @@ afterEach(() => {
 });
 
 describe("buildPresetCatalog", () => {
+  test.each([
+    "testdata/inputs",
+    "testdata/input",
+  ])("preserves source and provenance from %s", (sourceRoot) => {
+    const source = "SELECT '雪😀'";
+    const workspace = fixture([["query/example.sql", source]], sourceRoot);
+    const catalog = readCatalog(workspace, build(workspace));
+
+    expect(catalog.source.root).toBe(sourceRoot);
+    expect(catalog.entries).toEqual([
+      {
+        path: "query/example.sql",
+        category: "query",
+        suggestedMode: "query",
+        expectedError: false,
+        source,
+      },
+    ]);
+  });
+
+  test("prefers the current layout when both roots exist", () => {
+    const workspace = fixture([["query/current.sql", "SELECT 1"]], "testdata/inputs");
+    const legacyInput = join(workspace.moduleDir, "testdata/input");
+    mkdirSync(legacyInput);
+    writeFileSync(join(legacyInput, "legacy.sql"), "SELECT 2");
+
+    const catalog = readCatalog(workspace, build(workspace));
+    expect(catalog.source.root).toBe("testdata/inputs");
+    expect(catalog.entries.map((entry) => entry.path)).toEqual(["query/current.sql"]);
+  });
+
+  test("rejects missing roots and never falls back from an invalid current root", () => {
+    const missing = fixture([]);
+    rmSync(missing.input, { recursive: true });
+    expect(() => build(missing)).toThrow(/preset source directory is missing/u);
+
+    const linked = fixture([["query/example.sql", "SELECT 1"]]);
+    symlinkSync("input", join(linked.moduleDir, "testdata/inputs"));
+    expect(() => build(linked)).toThrow(/symbolic link/u);
+
+    const regularFile = fixture([["query/example.sql", "SELECT 1"]]);
+    writeFileSync(join(regularFile.moduleDir, "testdata/inputs"), "not a directory");
+    expect(() => build(regularFile)).toThrow(/regular directory/u);
+  });
+
   test("is deterministic across filesystem creation order", () => {
     const files = [
       ["query/z.sql", "SELECT 3"],
@@ -206,10 +251,10 @@ describe("collectPresetEntries", () => {
   });
 });
 
-function fixture(files) {
+function fixture(files, sourceRoot = "testdata/input") {
   const root = mkdtempSync(join(tmpdir(), "preset-catalog-test-"));
   temporaryRoots.push(root);
-  const input = join(root, "input");
+  const input = join(root, sourceRoot);
   const output = join(root, "output");
   mkdirSync(input, { recursive: true });
   for (const [path, content] of files) {
@@ -217,12 +262,12 @@ function fixture(files) {
     mkdirSync(dirname(destination), { recursive: true });
     writeFileSync(destination, content);
   }
-  return { input, output };
+  return { moduleDir: root, input, output };
 }
 
 function build(workspace, overrides = {}) {
   return buildPresetCatalog({
-    inputDir: workspace.input,
+    moduleDir: workspace.moduleDir,
     outputDir: workspace.output,
     channel: "main",
     version,

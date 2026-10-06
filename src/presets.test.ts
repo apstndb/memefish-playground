@@ -43,7 +43,7 @@ function sourceByteCount(entries: readonly { source: string }[]): number {
   return entries.reduce((total, entry) => total + encoder.encode(entry.source).byteLength, 0);
 }
 
-function validCatalog(): Record<string, unknown> {
+function validCatalog(root = "testdata/input"): Record<string, unknown> {
   return {
     schemaVersion: 1,
     source: {
@@ -52,7 +52,7 @@ function validCatalog(): Record<string, unknown> {
       version,
       commit,
       moduleSum,
-      root: "testdata/input",
+      root,
     },
     count: validEntries.length,
     sourceBytes: sourceByteCount(validEntries),
@@ -131,14 +131,17 @@ async function expectCatalogError(
 }
 
 describe("preset catalog loading", () => {
-  it("verifies and decodes a catalog fetched with immutable caching", async () => {
-    const { asset, fetcher } = await encodeValue(validCatalog());
+  it.each([
+    "testdata/input",
+    "testdata/inputs",
+  ])("verifies and preserves the %s catalog source with immutable caching", async (root) => {
+    const { asset, fetcher } = await encodeValue(validCatalog(root));
 
     const catalog = await loadPresetCatalog(asset, fetcher, subtle);
 
     expect(fetcher).toHaveBeenCalledWith(asset.catalogUrl, { cache: "force-cache" });
     expect(catalog.count).toBe(3);
-    expect(catalog.source.channel).toBe("main");
+    expect(catalog.source).toEqual(validCatalog(root).source);
     expect(catalog.entries[1]).toMatchObject({
       path: "mystery/extension.sql",
       category: "mystery",
@@ -203,6 +206,21 @@ describe("preset catalog loading", () => {
     const catalog = validCatalog();
     (catalog.source as Record<string, unknown>)[field] = replacement;
     await expectCatalogError(catalog, "source provenance is invalid");
+  });
+
+  it.each([
+    "testdata/other",
+    "testdata/inputs/",
+    "/testdata/inputs",
+    "../testdata/inputs",
+    "testdata/inputs/../result",
+    "testdata\\inputs",
+    "testdata/%69nputs",
+    "testdata/inputs?raw=true",
+    "https://example.test/testdata/inputs",
+    "testdata/inputs\u0000",
+  ])("rejects unrecognized or unsafe source root %j", async (root) => {
+    await expectCatalogError(validCatalog(root), "source provenance is invalid");
   });
 
   it("cross-checks catalog and manifest totals", async () => {

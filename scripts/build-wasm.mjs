@@ -157,7 +157,7 @@ function buildChannel({ channel, buildKey, ref, tempRoot, goVersion, govulncheck
   const presets =
     channel === "main"
       ? buildPresetCatalog({
-          inputDir: join(download.Dir, "testdata", "input"),
+          moduleDir: download.Dir,
           outputDir,
           channel,
           version: download.Version,

@@ -2,7 +2,6 @@ import type { ResolvedPresetAsset } from "./manifest";
 import { isParseMode, type ParseMode } from "./protocol";
 
 const MEMEFISH_MODULE = "github.com/cloudspannerecosystem/memefish";
-const PRESET_ROOT = "testdata/input";
 const MAX_ENTRY_SOURCE_BYTES = 1024 * 1024;
 const MAX_PATH_BYTES = 1_024;
 
@@ -20,7 +19,7 @@ export interface PresetCatalogSource {
   version: string;
   commit: string;
   moduleSum: string;
-  root: string;
+  root: "testdata/input" | "testdata/inputs";
 }
 
 export interface PresetCatalog {
@@ -208,7 +207,7 @@ function decodeCatalogSource(
     version !== asset.version ||
     commit !== asset.commit ||
     !/^h1:[A-Za-z0-9+/]{43}=$/.test(moduleSum) ||
-    root !== PRESET_ROOT
+    (root !== "testdata/input" && root !== "testdata/inputs")
   ) {
     throw new PresetCatalogError("Preset catalog source provenance is invalid.");
   }

@@ -9,10 +9,11 @@ offers every stable memefish release tag and the newest successful `main`
 snapshot. The default release is the newest published stable tag; upstream CI
 status is shown as advisory metadata, while the playground's own build and
 browser checks determine whether it can be deployed. Every `.sql` file under
-the exact `main` snapshot's `testdata/input` tree is available through the
-preset browser. Parsed AST nodes are shown as an expandable tree; selecting a
-node highlights its source range, and moving the editor cursor reveals the
-deepest matching node. Separate output tabs expose the raw AST projection,
+the exact `main` snapshot's `testdata/inputs` tree (`testdata/input` in older
+snapshots) is available through the preset browser. Parsed AST nodes are shown
+as an expandable tree; selecting a node highlights its source range, and
+moving the editor cursor reveals the deepest matching node. Separate output
+tabs expose the raw AST projection,
 unparsed SQL, and an on-demand colorized Go value rendering produced by
 [`k0kubun/pp/v3`](https://github.com/k0kubun/pp). The Go value view follows
 memefish's own omit-empty presentation and clearly reports browser depth,
