@@ -22,7 +22,7 @@ export const DEFAULT_PRESET_LIMITS = Object.freeze({
 });
 
 const modulePath = "github.com/cloudspannerecosystem/memefish";
-const sourceRoot = "testdata/input";
+const sourceRoots = ["testdata/inputs", "testdata/input"];
 const suggestedModes = new Map([
   ["ddl", "ddl"],
   ["dml", "dml"],
@@ -33,7 +33,7 @@ const suggestedModes = new Map([
 ]);
 
 export function buildPresetCatalog({
-  inputDir,
+  moduleDir,
   outputDir,
   channel,
   version,
@@ -41,9 +41,10 @@ export function buildPresetCatalog({
   moduleSum = "",
   limits = DEFAULT_PRESET_LIMITS,
 }) {
-  validateProvenance({ inputDir, outputDir, channel, version, commit, moduleSum });
+  validateProvenance({ moduleDir, outputDir, channel, version, commit, moduleSum });
   const resolvedLimits = validateLimits(limits);
-  const entries = collectPresetEntries(inputDir, resolvedLimits);
+  const sourceRoot = resolveSourceRoot(moduleDir);
+  const entries = collectPresetEntries(join(moduleDir, sourceRoot), resolvedLimits);
   const sourceBytes = entries.reduce((total, entry) => total + Buffer.byteLength(entry.source), 0);
   const catalog = {
     schemaVersion: PRESET_CATALOG_SCHEMA_VERSION,
@@ -85,6 +86,17 @@ export function buildPresetCatalog({
     count: entries.length,
     sourceBytes,
   };
+}
+
+function resolveSourceRoot(moduleDir) {
+  // Upstream renamed input to inputs in September 2026. Prefer the current
+  // layout, but keep exact older snapshots buildable without guessing paths.
+  for (const sourceRoot of sourceRoots) {
+    if (lstatSync(join(moduleDir, sourceRoot), { throwIfNoEntry: false }) !== undefined) {
+      return sourceRoot;
+    }
+  }
+  throw new Error(`preset source directory is missing; expected ${sourceRoots.join(" or ")}`);
 }
 
 export function collectPresetEntries(inputDir, limits = DEFAULT_PRESET_LIMITS) {
@@ -190,9 +202,9 @@ function hasControlCharacter(value) {
   return false;
 }
 
-function validateProvenance({ inputDir, outputDir, channel, version, commit, moduleSum }) {
-  if (typeof inputDir !== "string" || inputDir.length === 0) {
-    throw new TypeError("preset input directory must be a non-empty string");
+function validateProvenance({ moduleDir, outputDir, channel, version, commit, moduleSum }) {
+  if (typeof moduleDir !== "string" || moduleDir.length === 0) {
+    throw new TypeError("preset module directory must be a non-empty string");
   }
   if (typeof outputDir !== "string" || outputDir.length === 0) {
     throw new TypeError("preset output directory must be a non-empty string");

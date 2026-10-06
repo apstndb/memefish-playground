@@ -1,6 +1,6 @@
 # Third-party licenses
 
-The WebAssembly bundles and generated `testdata/input` preset catalog
+The WebAssembly bundles and generated preset catalog
 distributed by memefish-playground include material from the projects listed
 below.
 

@@ -76,10 +76,13 @@ is intentionally no cross-repository event trigger or credential to maintain.
 
 ## Preset catalog
 
-The preset generator walks `testdata/input` in the same module directory used
-to build the CI-qualified `main` engine. It preserves every UTF-8 source byte,
-including whether a final newline exists, and records path, category, suggested
-parse mode, and the `!bad_` expected-diagnostic marker. The compact JSON catalog
+The preset generator walks `testdata/inputs` in the same module directory used
+to build the CI-qualified `main` engine, falling back to `testdata/input` only
+when the current root is absent in an older snapshot. The catalog records the
+actual root, and the browser accepts only these two known roots. It preserves
+every UTF-8 source byte, including whether a final newline exists, and records
+path, category, suggested parse mode, and the `!bad_` expected-diagnostic marker.
+The compact JSON catalog
 is sorted deterministically and named with its full SHA-256 digest.
 
 `versions.json` exposes the catalog as optional additive metadata so an older
@@ -162,7 +165,7 @@ formatting stream does not need, so it is intentionally not used.
   a browser smoke test.
 - CodeMirror SQL highlighting is best effort. memefish remains authoritative
   for Spanner GoogleSQL and GQL syntax and diagnostics.
-- `testdata/input` can change without a schema promise. Unknown first-level
+- The upstream preset tree can change without a schema promise. Unknown first-level
   categories remain discoverable and loadable; only known categories receive a
   parse-mode suggestion.
 - `ParseSchemaType` became public in memefish v0.8.0. Older releases are built

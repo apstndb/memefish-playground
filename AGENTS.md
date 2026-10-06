@@ -36,7 +36,7 @@ commit and build time.
 - `scripts/memefish-capabilities.mjs` maps upstream API-version boundaries to
   build tags and advertised parse modes.
 - `scripts/preset-catalog.mjs` snapshots every `.sql` input from the selected
-  main module's `testdata/input` tree.
+  main module's `testdata/inputs` tree (`testdata/input` in older snapshots).
 - `public/wasm/` is generated and must not be committed.
 
 Keep the structure flat. This small app uses no DI framework and no backend.

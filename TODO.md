@@ -15,8 +15,8 @@ tracked project document, not a temporary agent scratch file.
 
 ## Milestone 2: upstream presets and version history
 
-- [x] Generate an immutable catalog containing every `main` `testdata/input`
-  source file.
+- [x] Generate an immutable catalog containing every `main` `testdata/inputs`
+  source file, retaining compatibility with the older `testdata/input` layout.
 - [x] Add a lazy, searchable preset browser with dynamic categories and
   expected-diagnostic labels.
 - [x] Preserve exact source, apply suggested parse modes, and keep engine
